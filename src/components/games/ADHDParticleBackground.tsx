@@ -84,8 +84,10 @@ const ADHDParticleBackground: React.FC = () => {
   return (
     <canvas
       ref={canvasRef}
-      className="fixed inset-0 z-0 pointer-events-none"
-      style={{ top: 0, left: 0, width: '100%', height: '100%' }}
+      className="fixed inset-0 pointer-events-none"
+      // Force the particle canvas behind all app chrome — using a negative zIndex
+      // avoids stacking context issues where z-0 might still overlap some children.
+      style={{ top: 0, left: 0, width: '100%', height: '100%', zIndex: -10 as any }}
     />
   );
 };

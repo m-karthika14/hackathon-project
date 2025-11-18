@@ -22,7 +22,8 @@ const PORT = process.env.PORT || 5000;
 
 // If MONGO_URI is provided, attempt to connect. Otherwise start server in a "DB-less" dev mode.
 if (process.env.MONGO_URI) {
-  mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  // Modern mongoose no longer needs the legacy options; pass the URI only.
+  mongoose.connect(process.env.MONGO_URI)
     .then(() => {
       console.log('MongoDB connected successfully');
       app.listen(PORT, () => console.log(`Server running on port: ${PORT}`));

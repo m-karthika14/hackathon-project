@@ -110,7 +110,7 @@ const GlobalStyles = memo(() => (
             width: 100%;
             padding: 2.5rem;
             box-sizing: border-box;
-            background: rgba(0, 0, 0, 0.85);
+            background: transparent;
             backdrop-filter: blur(10px);
             border: 1px solid var(--wall-color);
             border-radius: 20px;

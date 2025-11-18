@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ADHDParticleBackground from './ADHDParticleBackground';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -26,6 +26,8 @@ import {
   XCircle,
   Download,
   RotateCcw,
+  ArrowLeft,
+  ArrowRight,
 } from 'lucide-react';
 import * as Tone from 'tone';
 
@@ -40,12 +42,11 @@ const STIMULI = {
   colorMap: { red: '#ef4444', blue: '#3b82f6', green: '#22c55e', yellow: '#facc15' },
 };
 
-// --- MODIFICATION: Updated trial counts ---
-// Removed the practice block so the ADHD game starts directly with the timed assessment blocks
+// --- MODIFICATION: Removed practice block - assessment starts directly ---
 const GAME_BLOCKS = [
-  { key: 'shape', name: 'Sort by Shape', rule: 'shape', trials: 15, timed: true },
-  { key: 'color', name: 'Sort by Color', rule: 'color', trials: 15, timed: true },
-  { key: '2back', name: '2-Back Memory', rule: '2-back', trials: 15, timed: true }, // Changed from 20 to 15
+  { key: 'shape', name: 'Sort by Shape', rule: 'shape', trials: 6, timed: true },
+  { key: 'color', name: 'Sort by Color', rule: 'color', trials: 5, timed: true },
+  { key: '2back', name: '2-Back Memory', rule: '2-back', trials: 6, timed: true },
 ];
 
 // ---------- AUDIO ----------
@@ -238,38 +239,58 @@ const ShapeSVG = ({ shape, color }) => {
   }
 };
 
+const NeuroBackground = () => (
+  <div className="absolute inset-0 -z-10 overflow-hidden">
+    <div className="absolute inset-0 bg-gradient-to-br from-[#030313] via-[#071126] to-[#050214] opacity-95" />
+    <svg className="absolute inset-0 w-full h-full opacity-30" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <linearGradient id="g1" x1="0" x2="1">
+          <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.06" />
+          <stop offset="100%" stopColor="#7c3aed" stopOpacity="0.06" />
+        </linearGradient>
+      </defs>
+      <g stroke="url(#g1)" strokeWidth="1" fill="none">
+        <path d="M20 80 L200 80 L200 200" />
+        <path d="M120 0 L120 220 L620 220 L620 360 L780 360" />
+        <path d="M0 480 L360 480 L360 520 L760 520" />
+      </g>
+    </svg>
 
+    <div className="pointer-events-none">
+      <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+        {Array.from({ length: 35 }).map((_, i) => (
+          <circle
+            key={i}
+            cx={`${Math.random() * 100}`}
+            cy={`${Math.random() * 100}`}
+            r={`${Math.random() * 0.7 + 0.2}`}
+            fill={Math.random() > 0.6 ? '#06b6d4' : '#a78bfa'}
+            opacity={Math.random() * 0.7 + 0.1}
+          />
+        ))}
+      </svg>
+    </div>
+
+    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#0ea5a4]/10 via-transparent to-[#f97316]/04" />
+  </div>
+);
 
 // ---------- SCREENS ----------
 
 const StartScreen = ({ onStart }) => (
-  <motion.div
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0 }}
-    className="max-w-3xl w-full mx-auto p-8 rounded-2xl bg-gradient-to-br from-black/40 to-slate-900/60 backdrop-blur-sm"
-    style={{ border: '2px solid #00FFC0', boxShadow: '0 8px 36px rgba(0,255,192,0.14), 0 0 60px rgba(0,255,192,0.28), inset 0 0 8px rgba(0,255,192,0.06)' }}
-  >
+  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="max-w-3xl w-full mx-auto p-8 rounded-2xl border border-slate-800 backdrop-blur-sm">
     <div className="flex flex-col items-center gap-4">
-        <div className="flex items-center gap-3">
-            <div className="p-3 rounded-full bg-gradient-to-br from-cyan-600/30 to-violet-600/30 shadow-xl">
-              <BrainCircuit className="w-12 h-12 text-cyan-300" />
-            </div>
-            <h1
-              className="text-4xl md:text-5xl font-extrabold tracking-tight"
-              style={{
-                color: '#00FFC0',
-                textShadow: '0 0 6px rgba(0,255,192,0.6), 0 0 12px rgba(0,255,192,0.35)'
-              }}
-            >
-              NeuroMatrix
-            </h1>
-          </div>
-        <p className="text-center text-slate-300 max-w-2xl">A quick, gamified executive function assessment. You will complete three timed blocks that measure task switching and working memory (2-back). Focus and follow the rules — they will change.</p>
-        <div className="text-sm text-amber-300">⏱️ Time limit: 60 seconds total • Estimated runtime: ~5–8 minutes. Demo only — not a clinical diagnosis.</div>
-        <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.98 }} onClick={onStart} className="mt-4 px-8 py-4 rounded-2xl bg-gradient-to-r from-cyan-400 to-violet-500 text-black font-semibold shadow-2xl">
-          Start Assessment
-        </motion.button>
+      <div className="flex items-center gap-3">
+        <div className="p-3 rounded-full bg-gradient-to-br from-cyan-600/30 to-violet-600/30 shadow-xl">
+          <BrainCircuit className="w-12 h-12 text-cyan-300" />
+        </div>
+        <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-cyan-300 to-violet-400">NeuroMatrix</h1>
+      </div>
+      <p className="text-center text-slate-300 max-w-2xl">A quick, gamified executive function assessment. You will complete three timed blocks that measure task switching and working memory (2-back). Focus and follow the rules — they will change.</p>
+      <div className="text-sm text-amber-300">⏱️ Time limit: 60 seconds total • Estimated runtime: ~5–8 minutes. Demo only — not a clinical diagnosis.</div>
+      <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.98 }} onClick={onStart} className="mt-4 px-8 py-4 rounded-2xl bg-gradient-to-r from-cyan-400 to-violet-500 text-black font-semibold shadow-2xl">
+        Start Assessment
+      </motion.button>
       <div className="mt-6 text-xs text-slate-500 text-center max-w-xl">Controls: Click LEFT or RIGHT buttons. Use touch on mobile. Sound enabled (Tone.js).</div>
     </div>
   </motion.div>
@@ -300,25 +321,40 @@ const GameScreen = ({ onComplete }) => {
   const [feedback, setFeedback] = useState(null);
   const [showRuleChange, setShowRuleChange] = useState(false);
   const startRef = useRef(null);
-  const [timeLeft, setTimeLeft] = useState(60);
+  const [timeLeft, setTimeLeft] = useState(20);
   const [gameStartTime] = useState(Date.now());
 
   useEffect(() => {
     sfx.init();
-    
-    // Timer countdown
+  }, []);
+
+  // Reset timer to 20 seconds when block changes
+  useEffect(() => {
+    setTimeLeft(20);
+  }, [blockIndex]);
+
+  useEffect(() => {
+    // Timer countdown for current block
     const timer = setInterval(() => {
       setTimeLeft(prev => {
+        if (showRuleChange) return prev; // Don't countdown during rule change
+        
         if (prev <= 1) {
           clearInterval(timer);
-          console.log('⏰ Time limit reached! Completing ADHD game...');
-          console.log('📊 Final eventLog length at timeout:', eventLog.length);
-          console.log('🔍 Final eventLog content:', eventLog);
-          // Just complete the game - handleComplete will do the save
-          setTimeout(() => {
-            console.log('⏰ TIMEOUT: Calling onComplete with eventLog:', eventLog);
-            onComplete(eventLog);
-          }, 200);
+          console.log('⏰ Block time expired');
+          // If this is the last block, complete the game
+          if (blockIndex >= GAME_BLOCKS.length - 1) {
+            console.log('⏰ All blocks time expired — completing ADHD game...');
+            setTimeout(() => {
+              console.log('⏰ TIMEOUT: Calling onComplete with eventLog:', eventLog);
+              onComplete(eventLog);
+            }, 200);
+            return 0;
+          }
+          // Otherwise advance to the next block
+          setBlockIndex(b => b + 1);
+          setTrialIndex(0);
+          setShowRuleChange(true);
           return 0;
         }
         return prev - 1;
@@ -326,7 +362,7 @@ const GameScreen = ({ onComplete }) => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [eventLog, onComplete]);
+  }, [showRuleChange, eventLog, onComplete, blockIndex]);
 
   const currentBlock = GAME_BLOCKS[blockIndex];
 
@@ -339,8 +375,12 @@ const GameScreen = ({ onComplete }) => {
 
   const scheduleNext = useCallback(() => {
     setFeedback(null);
-    if (trialIndex >= currentBlock.trials - 1) {
+    
+    // Check if we've completed all trials in current block
+    if (trialIndex + 1 >= currentBlock.trials) {
+      // Current block is complete
       if (blockIndex >= GAME_BLOCKS.length - 1) {
+        // All blocks complete
         console.log('🏁 All ADHD game blocks completed! Completing game...');
         console.log('📊 Current eventLog length:', eventLog.length);
         console.log('🔍 Current eventLog content:', eventLog);
@@ -351,12 +391,14 @@ const GameScreen = ({ onComplete }) => {
         }, 500);
         return;
       }
+      // Move to next block
       setBlockIndex(b => b + 1);
       setTrialIndex(0);
       setShowRuleChange(true);
       sfx.sw();
       return;
     }
+    // Continue to next trial in current block
     setTrialIndex(t => t + 1);
   }, [trialIndex, blockIndex, currentBlock.trials, onComplete, eventLog]);
 
@@ -376,6 +418,9 @@ const GameScreen = ({ onComplete }) => {
     const stimulusAppearanceTimestamp = new Date(responseTimestamp.getTime() - rt);
     
     const isCorrect = side === currentTrial.correctResponse;
+    
+    // Mark first 2 trials in 2-back block as practice
+    const isPractice = currentBlock.rule === '2-back' && trialIndex < 2;
 
     const entry = {
       trialNumber: eventLog.length,
@@ -390,6 +435,7 @@ const GameScreen = ({ onComplete }) => {
       reactionTime: Math.round(rt),
       stimulusAppearanceTimestamp: stimulusAppearanceTimestamp.toISOString(),
       responseTimestamp: responseTimestamp.toISOString(),
+      isPractice, // Add practice flag
     };
 
     setEventLog(prev => [...prev, entry]);
@@ -399,72 +445,59 @@ const GameScreen = ({ onComplete }) => {
     setTimeout(scheduleNext, 420);
   };
 
-  // Richer rule display with icons and clearer alignment
-  const RuleDisplay = ({ rule }) => {
-    if (rule === 'shape') {
+  const ruleDisplay = useMemo(() => {
+    if (currentBlock.rule === 'shape') {
       return (
-        <div className="mt-3 flex flex-col items-center gap-3">
-          <div className="text-slate-300 font-medium">Rule: <span className="font-semibold text-cyan-200">Sort by <span className="uppercase">SHAPE</span></span></div>
-          <div className="flex flex-wrap gap-3 justify-center">
-            <div className="flex items-center gap-3 bg-slate-800/30 px-3 py-2 rounded-full border border-slate-700">
-              <div className="w-8 h-8 rounded-full bg-slate-900/40 flex items-center justify-center">
-                <svg viewBox="0 0 100 100" className="w-5 h-5"><ShapeSVG shape="circle" color="#60a5fa"/></svg>
-              </div>
-              <div className="text-sm text-slate-300">Circle / Square</div>
-              <div className="text-sm text-cyan-300 font-semibold">← LEFT</div>
-            </div>
-
-            <div className="flex items-center gap-3 bg-slate-800/30 px-3 py-2 rounded-full border border-slate-700">
-              <div className="w-8 h-8 rounded-full bg-slate-900/40 flex items-center justify-center">
-                <svg viewBox="0 0 100 100" className="w-5 h-5"><ShapeSVG shape="triangle" color="#f97316"/></svg>
-              </div>
-              <div className="text-sm text-slate-300">Triangle / Star</div>
-              <div className="text-sm text-cyan-300 font-semibold">RIGHT →</div>
-            </div>
+        <div className="flex items-center justify-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 rounded-lg border border-cyan-500/30">
+            <span className="text-cyan-300">⚪ ⬜</span>
+            <ArrowLeft className="w-4 h-4 text-cyan-400" />
+            <span className="text-xs text-cyan-200 font-semibold">LEFT</span>
+          </div>
+          <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-pink-500/20 to-orange-500/20 rounded-lg border border-orange-500/30">
+            <span className="text-orange-300">▲ ⭐</span>
+            <ArrowRight className="w-4 h-4 text-orange-400" />
+            <span className="text-xs text-orange-200 font-semibold">RIGHT</span>
           </div>
         </div>
       );
     }
-
-    if (rule === 'color') {
+    if (currentBlock.rule === 'color') {
       return (
-        <div className="mt-3 flex flex-col items-center gap-3">
-          <div className="text-slate-300 font-medium">Rule: <span className="font-semibold text-cyan-200">Sort by <span className="uppercase">COLOR</span></span></div>
-          <div className="flex flex-wrap gap-3 justify-center">
-            <div className="flex items-center gap-3 bg-slate-800/30 px-3 py-2 rounded-full border border-slate-700">
-              <div className="w-5 h-5 rounded-full" style={{ background: STIMULI.colorMap.red }} />
-              <div className="w-5 h-5 rounded-full" style={{ background: STIMULI.colorMap.blue }} />
-              <div className="text-sm text-slate-300">Red / Blue</div>
-              <div className="text-sm text-cyan-300 font-semibold">← LEFT</div>
-            </div>
-
-            <div className="flex items-center gap-3 bg-slate-800/30 px-3 py-2 rounded-full border border-slate-700">
-              <div className="w-5 h-5 rounded-full" style={{ background: STIMULI.colorMap.green }} />
-              <div className="w-5 h-5 rounded-full" style={{ background: STIMULI.colorMap.yellow }} />
-              <div className="text-sm text-slate-300">Green / Yellow</div>
-              <div className="text-sm text-cyan-300 font-semibold">RIGHT →</div>
-            </div>
+        <div className="flex items-center justify-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-red-500/20 to-blue-500/20 rounded-lg border border-blue-500/30">
+            <span className="text-red-400">🔴</span>
+            <span className="text-blue-400">🔵</span>
+            <ArrowLeft className="w-4 h-4 text-blue-400" />
+            <span className="text-xs text-blue-200 font-semibold">LEFT</span>
+          </div>
+          <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500/20 to-yellow-500/20 rounded-lg border border-yellow-500/30">
+            <span className="text-green-400">🟢</span>
+            <span className="text-yellow-400">🟡</span>
+            <ArrowRight className="w-4 h-4 text-yellow-400" />
+            <span className="text-xs text-yellow-200 font-semibold">RIGHT</span>
           </div>
         </div>
       );
     }
-
-    // 2-back rule
     return (
-      <div className="mt-3 text-center">
-        <div className="text-slate-300 font-medium">Rule: <span className="font-semibold text-cyan-200">2-BACK</span></div>
-        <div className="mt-2 text-sm text-slate-300 max-w-xl mx-auto">If the current shape matches the shape shown two trials ago, press <span className="font-semibold text-cyan-300">LEFT</span>. Otherwise press <span className="font-semibold text-cyan-300">RIGHT</span>.</div>
-        <div className="mt-2 flex items-center justify-center gap-2 text-xs text-slate-500">
-          <div className="px-2 py-1 bg-slate-800/30 rounded">Previous</div>
-          <div className="px-2 py-1 bg-slate-800/40 rounded">2-back</div>
-          <div className="px-2 py-1 bg-slate-800/30 rounded">Current</div>
+      <div className="flex items-center justify-center gap-4 flex-wrap">
+        <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500/20 to-emerald-500/20 rounded-lg border border-emerald-500/30">
+          <span className="text-emerald-300">✓ Same</span>
+          <ArrowLeft className="w-4 h-4 text-emerald-400" />
+          <span className="text-xs text-emerald-200 font-semibold">LEFT</span>
+        </div>
+        <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-slate-500/20 to-gray-500/20 rounded-lg border border-gray-500/30">
+          <span className="text-gray-300">✗ Different</span>
+          <ArrowRight className="w-4 h-4 text-gray-400" />
+          <span className="text-xs text-gray-200 font-semibold">RIGHT</span>
         </div>
       </div>
     );
-  };
+  }, [currentBlock.rule]);
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="w-full max-w-4xl mx-auto p-6 rounded-2xl bg-black/40 border border-slate-800">
+    <div>
       {showRuleChange ? (
         <div className="text-center p-6">
           <ShieldAlert className="w-16 h-16 mx-auto text-amber-400 mb-4" />
@@ -474,15 +507,15 @@ const GameScreen = ({ onComplete }) => {
       ) : (
         <>
           <div className="mb-4 text-center">
-            <div className="inline-block px-4 py-2 rounded-full bg-slate-800/30 border border-slate-700 text-cyan-300 font-semibold">{currentBlock.name}</div>
-            <RuleDisplay rule={currentBlock.rule} />
-            <div className="mt-1 text-xs text-slate-500">{currentBlock.timed ? 'Timed Block' : 'Practice — untimed'}</div>
+            <div className="inline-block px-4 py-2 rounded-full border border-slate-700 text-cyan-300 font-semibold">{currentBlock.name}</div>
+            <div className="mt-4">{ruleDisplay}</div>
+            <div className="mt-1 text-xs text-slate-500">Timed Block</div>
           </div>
           <HUD current={trialIndex} total={currentBlock.trials} timeLeft={timeLeft} />
           <div className="flex flex-col items-center py-6">
             <AnimatePresence mode="wait">
               {currentTrial && (
-                <motion.div key={`${blockIndex}-${trialIndex}`} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={{ type: 'spring', stiffness: 300 }} className="w-56 h-56 md:w-72 md:h-72 rounded-2xl bg-gradient-to-br from-black/40 to-slate-900/40 border border-slate-700 flex items-center justify-center shadow-xl">
+                <motion.div key={`${blockIndex}-${trialIndex}`} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={{ type: 'spring', stiffness: 300 }} className="w-56 h-56 md:w-72 md:h-72 rounded-2xl border border-slate-700 flex items-center justify-center shadow-xl">
                   <svg viewBox="0 0 100 100" className="w-40 h-40 md:w-56 md:h-56">
                     <ShapeSVG shape={currentTrial.shape} color={currentTrial.colorValue} />
                   </svg>
@@ -490,7 +523,7 @@ const GameScreen = ({ onComplete }) => {
               )}
             </AnimatePresence>
           </div>
-          <div className="flex flex-wrap gap-4 justify-center mt-4">
+          <div className="flex gap-4 justify-center mt-4">
             {['left', 'right'].map((side) => {
               const isChosen = feedback && ((feedback === 'correct' && side === currentTrial?.correctResponse) || (feedback === 'incorrect' && side !== currentTrial?.correctResponse));
               const bg = feedback ? (isChosen ? 'bg-green-700' : 'bg-red-800') : 'bg-slate-800';
@@ -510,7 +543,7 @@ const GameScreen = ({ onComplete }) => {
           </div>
         </>
       )}
-    </motion.div>
+    </div>
   );
 };
 
@@ -526,16 +559,18 @@ const InsightCard = ({ title, icon, text }) => (
 
 // ---------- METRICS / REPORT ----------
 const analyzePerformance = (eventLog) => {
-  const timed = eventLog.filter(e => GAME_BLOCKS.find(b => b.key === e.blockKey)?.timed);
+  // Filter out practice trials (first 2 trials in 2-back block)
+  const nonPractice = eventLog.filter(e => !e.isPractice);
+  const timed = nonPractice.filter(e => GAME_BLOCKS.find(b => b.key === e.blockKey)?.timed);
   const correctTimed = timed.filter(t => t.isCorrect);
   const avgRT = Math.round(mean(correctTimed.map(t => t.reactionTime)) || 0);
   const rtStd = Math.round(std(correctTimed.map(t => t.reactionTime)) || 0);
   const overallAccuracy = Math.round((timed.filter(t => t.isCorrect).length / (timed.length || 1)) * 100);
 
   const switchTrialIndices = [];
-  for (let i = 1; i < eventLog.length; i++) {
-    const prev = eventLog[i - 1];
-    const cur = eventLog[i];
+  for (let i = 1; i < nonPractice.length; i++) {
+    const prev = nonPractice[i - 1];
+    const cur = nonPractice[i];
     if (prev.blockKey !== cur.blockKey && GAME_BLOCKS.find(b => b.key === cur.blockKey)?.timed) {
       const idxInTimed = timed.findIndex(t => t.trialNumber === cur.trialNumber);
       if (idxInTimed >= 0) switchTrialIndices.push(idxInTimed);
@@ -555,7 +590,8 @@ const analyzePerformance = (eventLog) => {
     totalSwitchCostAcc += (preAcc - postAcc) || 0;
   });
 
-  const twoBack = eventLog.filter(e => e.blockKey === '2back');
+  // Only count non-practice trials for 2-back accuracy
+  const twoBack = nonPractice.filter(e => e.blockKey === '2back');
   const twoBackAccuracy = Math.round((twoBack.filter(t => t.isCorrect).length / (twoBack.length || 1)) * 100);
 
   const accuracyScore = overallAccuracy;
@@ -767,9 +803,9 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
   };
 
   return (
-    <div className="min-h-screen antialiased font-sans gradient-bg text-white flex items-center justify-center p-6 relative">
+    <div className="min-h-screen antialiased font-sans text-white flex items-center justify-center p-6 relative">
       <ADHDParticleBackground />
-      <div className="w-full max-w-6xl relative z-10">
+      <div className="w-full max-w-6xl">
         <AnimatePresence mode="wait">
           {stage === 'start' && <StartScreen onStart={handleStart} key="start" />}
           {stage === 'game' && <GameScreen onComplete={handleComplete} key="game" />}

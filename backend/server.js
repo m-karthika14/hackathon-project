@@ -6,6 +6,7 @@ const authRoutes = require('./routes/auth.js');
 const reportRoutes = require('./routes/report.js');
 const faceMonitorRoutes = require('./routes/faceMonitor.js');
 const insightRoutes = require('./routes/insights.js');
+const logsRoutes = require('./routes/logs.js');
 
 dotenv.config();
 
@@ -17,23 +18,45 @@ app.use('/api/auth', authRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/face', faceMonitorRoutes);
 app.use('/api/insights', insightRoutes);
+app.use('/api/logs', logsRoutes);
 
 const PORT = process.env.PORT || 5000;
 
-// If MONGO_URI is provided, attempt to connect. Otherwise start server in a "DB-less" dev mode.
-if (process.env.MONGO_URI) {
-  // Modern mongoose no longer needs the legacy options; pass the URI only.
-  mongoose.connect(process.env.MONGO_URI)
-    .then(() => {
+// If MONGO_URI is provided, attempt to connect. Otherwise, for developer convenience
+// spin up an in-memory mongod using mongodb-memory-server so integration tests and
+// local verification can run without an external Mongo instance.
+const startServer = async () => {
+  if (process.env.MONGO_URI) {
+    try {
+      await mongoose.connect(process.env.MONGO_URI);
       console.log('MongoDB connected successfully');
       app.listen(PORT, () => console.log(`Server running on port: ${PORT}`));
-    })
-    .catch((error) => {
-      console.error('Failed to connect to MongoDB:', error.message);
-      // Still start the server so the frontend can be developed against non-DB endpoints.
+    } catch (err) {
+      console.error('Failed to connect to MongoDB:', err.message);
       app.listen(PORT, () => console.log(`Server running on port: ${PORT} (without DB)`));
+    }
+    return;
+  }
+
+  // Dev fallback: use mongodb-memory-server
+  try {
+    console.warn('MONGO_URI not set — starting embedded in-memory MongoDB for development.');
+    const { MongoMemoryServer } = require('mongodb-memory-server');
+    const mongod = await MongoMemoryServer.create();
+    const uri = mongod.getUri();
+    await mongoose.connect(uri);
+    console.log('In-memory MongoDB started and connected (dev only)');
+    app.listen(PORT, () => console.log(`Server running on port: ${PORT} (using in-memory MongoDB)`));
+    // Keep a reference so process exit can stop the in-memory server if needed
+    process.on('SIGINT', async () => {
+      await mongoose.disconnect();
+      await mongod.stop();
+      process.exit(0);
     });
-} else {
-  console.warn('MONGO_URI not set — starting server without connecting to MongoDB. Some features may be disabled.');
-  app.listen(PORT, () => console.log(`Server running on port: ${PORT} (no DB)`));
-}
+  } catch (err) {
+    console.error('Failed to start in-memory MongoDB:', err.message);
+    app.listen(PORT, () => console.log(`Server running on port: ${PORT} (no DB)`));
+  }
+};
+
+startServer();

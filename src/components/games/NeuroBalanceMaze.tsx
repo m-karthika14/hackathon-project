@@ -979,6 +979,59 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
             }
         })();
 
+        // Also save raw logs under the user's document (guestId or userId)
+        (async () => {
+            try {
+                const guestId = localStorage.getItem('guestId');
+                const userId = localStorage.getItem('userId');
+                const sessionId = localStorage.getItem('gameSessionId') || null;
+
+                // Build level-1 structured logs per spec
+                const level1 = fullMetrics[1];
+                const level1ErrorLog = (log || []).filter(e => e && e.level === 1);
+                const level1Logs = [] as any[];
+                if (level1) {
+                    level1Logs.push({
+                        level: 1,
+                        startTime: level1.startTime || null,
+                        moves: level1.moves || 0,
+                        wallCollisions: level1.wallCollisions || 0,
+                        sharpTurns: level1.sharpTurns || 0,
+                        path: level1.path || [],
+                        shortestPath: level1.shortestPath || null,
+                        completionTime: level1.completionTime || null,
+                        errorLog: level1ErrorLog
+                    });
+                }
+
+                const logsPayload = {
+                    gameKey: 'maze',
+                    logs: level1Logs,
+                    sessionId,
+                    guestId: guestId || null,
+                    userId: userId || null
+                };
+
+                console.log('📤 Sending raw maze logs to /api/logs', logsPayload);
+                try { console.log('[DEBUG] /api/logs payload (maze):', JSON.stringify(logsPayload).slice(0,2000)); } catch (e) {}
+
+                const logsResp = await fetch('http://localhost:5000/api/logs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(logsPayload)
+                });
+
+                if (!logsResp.ok) {
+                    console.error('❌ Failed to save raw maze logs', await logsResp.text());
+                } else {
+                    const lr = await logsResp.json();
+                    console.log('✅ Raw maze logs saved:', lr);
+                }
+            } catch (err) {
+                console.error('❌ Error sending raw maze logs:', err);
+            }
+        })();
+
         // Generate AI Analysis in background (also async)
         (async () => {
             try {
@@ -1030,7 +1083,24 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
         <div className={`app-container ${gameState !== 'game' ? 'center-content' : ''} gradient-bg`}>
             <GlobalStyles />
             <MazeParticleBackground />
-            {gameState === 'start' && <StartScreen onStart={() => setGameState('game')} />}
+            {gameState === 'start' && <StartScreen onStart={async () => {
+                try {
+                    const guestId = localStorage.getItem('guestId');
+                    const userId = localStorage.getItem('userId');
+                    const payload: any = { checkOnly: true };
+                    if (userId) payload.userId = userId; else if (guestId) payload.guestId = guestId;
+                    const resp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    if (resp.ok) setGameState('game'); else {
+                        const txt = await resp.json().catch(() => ({}));
+                        const msg = txt && txt.message ? txt.message : 'You are not allowed to play at this time.';
+                        const next = txt && txt.nextAllowedAt ? ` Next allowed at: ${txt.nextAllowedAt}` : '';
+                        alert(msg + next);
+                    }
+                } catch (err) {
+                    console.error('Play availability check failed, starting anyway:', err);
+                    setGameState('game');
+                }
+            }} />}
             {gameState === 'game' && <GameScreen onGameComplete={handleGameComplete} />}
         </div>
     );

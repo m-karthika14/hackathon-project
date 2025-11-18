@@ -42,6 +42,24 @@ const STIMULI = {
   colorMap: { red: '#ef4444', blue: '#3b82f6', green: '#22c55e', yellow: '#facc15' },
 };
 
+// --- Types ---
+type Trial = { shape: string; colorName: string; colorValue: string; correctResponse: 'left' | 'right' };
+type EventEntry = {
+  trialNumber: number;
+  blockKey: string;
+  blockName: string;
+  rule: string;
+  stimulusShape: string;
+  stimulusColor: string;
+  userResponse: string;
+  correctResponse: 'left' | 'right';
+  isCorrect: boolean;
+  reactionTime: number;
+  stimulusAppearanceTimestamp: string;
+  responseTimestamp: string;
+  isPractice?: boolean;
+};
+
 // --- MODIFICATION: Removed practice block - assessment starts directly ---
 const GAME_BLOCKS = [
   { key: 'shape', name: 'Sort by Shape', rule: 'shape', trials: 6, timed: true },
@@ -50,7 +68,7 @@ const GAME_BLOCKS = [
 ];
 
 // ---------- AUDIO ----------
-const sfx = {
+const sfx: { synth: any | null; isInit: boolean; init: () => void; play: (note?: string, dur?: string) => void; success: () => void; error: () => void; sw: () => void } = {
   synth: null,
   isInit: false,
   init() {
@@ -78,142 +96,139 @@ const sfx = {
 };
 
 // ---------- HELPERS ----------
-const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const rand = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
-// Save game data to MongoDB
-const saveGameData = async (eventLog) => {
+// Save game data to MongoDB (supports guestId or userId)
+const saveGameData = async (eventLog: EventEntry[]) => {
   console.log('🎮 ===== STARTING ADHD GAME DATA SAVE =====');
-  console.log('🔍 Event log received:', eventLog);
-  console.log('📊 Event log length:', eventLog?.length || 0);
-  console.log('🔍 Event log type:', typeof eventLog);
-  console.log('🔍 Event log is array:', Array.isArray(eventLog));
-  
+
   try {
     const userId = localStorage.getItem('userId');
-    console.log('👤 Retrieved userId from localStorage:', userId);
-    console.log('👤 userId type:', typeof userId);
-    
-    if (!userId) {
-      console.warn('⚠️ No userId found in localStorage, cannot save ADHD game data');
-      alert('❌ No user ID found! Cannot save ADHD game data.');
-      return;
-    }
+    const guestId = localStorage.getItem('guestId');
+    console.log('👤 userId:', userId, 'guestId:', guestId);
 
     if (!eventLog || eventLog.length === 0) {
       console.warn('⚠️ No event log data to save');
-      console.log('🔍 eventLog is:', eventLog);
-      alert('❌ No event log data to save!');
       return;
     }
 
-    console.log('📈 Analyzing performance...');
-    const analysis = analyzePerformance(eventLog);
-    console.log('✅ Analysis complete:', analysis);
-    console.log('📊 Analysis type:', typeof analysis);
+    // 1) Always attempt to save raw logs under the user's document (guest or user)
+    try {
+        const sessionId = localStorage.getItem('gameSessionId') || null;
+        // Ensure every entry has level:1 so backend filtering will pick them up
+        const normalized = Array.isArray(eventLog) ? eventLog.map(e => ({ ...(e || {}), level: (e && e.level) || 1 })) : [];
+        // Only include level-1 entries (frontend filtering) to match DB schema
+        let level1Logs = normalized.filter(e => e && e.level === 1);
+        // Fallback: if no level-1 logs found but we do have normalized entries, send them all
+        if ((!level1Logs || level1Logs.length === 0) && normalized.length > 0) {
+          console.warn('No level-1 logs detected; falling back to sending all normalized entries');
+          level1Logs = normalized;
+        }
 
-    const gameData = {
-      userId,
-      gameType: 'NeuroMatrix-ADHD',
-      scores: {
-        motorControl: 0,
-        cognitiveLoad: Math.round(analysis.overallAccuracy * 100),
-        stressManagement: Math.max(0, 100 - Math.round(analysis.rtStd / 10)),
-        behavioralStability: Math.round(analysis.twoBackAccuracy * 100),
-        neuroBalance: Math.round((analysis.overallAccuracy + analysis.twoBackAccuracy) * 50),
-        // ADHD-specific scores
-        accuracy: Math.round(analysis.overallAccuracy * 100),
-        speed: Math.max(0, 100 - Math.round(analysis.avgRT / 10)),
-        consistency: Math.max(0, 100 - Math.round(analysis.rtStd / 10)),
-        flexibility: Math.round(analysis.twoBackAccuracy * 100),
-        memory: Math.round(analysis.twoBackAccuracy * 100)
-      },
-      performanceLog: eventLog,
-      gameMetrics: {
-        totalTrials: eventLog.length,
-        overallAccuracy: analysis.overallAccuracy,
-        averageReactionTime: analysis.avgRT,
-        reactionTimeStd: analysis.rtStd,
-        twoBackAccuracy: analysis.twoBackAccuracy,
-        adhdIndicator: analysis.adhdIndicator,
-        totalTime: 60000 // 60 seconds in milliseconds
-      },
-      summary: [`ADHD Game completed with ${eventLog.length} trials`],
-      aiAnalysis: 'ADHD game performance analysis pending'
-    };
-
-    console.log('📤 Sending ADHD game data to MongoDB:', gameData);
-    console.log('📦 gameData structure check:');
-    console.log('   - userId:', gameData.userId);
-    console.log('   - gameType:', gameData.gameType);
-    console.log('   - scores:', gameData.scores);
-    console.log('   - performanceLog length:', gameData.performanceLog.length);
-    console.log('   - gameMetrics:', gameData.gameMetrics);
-    console.log('🌐 Making request to: http://localhost:5000/api/reports');
-
-    // Add additional network debugging
-    console.log('🌐 Attempting fetch request...');
-    
-    const response = await fetch('http://localhost:5000/api/reports', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(gameData)
-    });
-
-    console.log('📡 Response received!');
-    console.log('📡 Response status:', response.status);
-    console.log('📡 Response status text:', response.statusText);
-    console.log('📡 Response ok:', response.ok);
-    console.log('📡 Response headers:', [...response.headers.entries()]);
-
-    if (response.ok) {
-      const result = await response.json();
-      console.log('✅ ADHD game data saved successfully to MongoDB!');
-      console.log('🎯 Saved report details:', result);
-      console.log('🆔 Report ID:', result.reportId || result._id);
-      alert('✅ ADHD game data saved successfully!');
-    } else {
-      const errorText = await response.text();
-      console.error('❌ Failed to save ADHD game data. Status:', response.status);
-      console.error('❌ Error response:', errorText);
-      console.error('❌ Full response object:', response);
-      alert(`❌ Failed to save ADHD game data! Status: ${response.status}`);
+        const payload = {
+          gameKey: 'adhd',
+          logs: level1Logs,
+          sessionId,
+          guestId: guestId || null,
+          userId: userId || null,
+        };
+      console.log('📤 Sending raw ADHD logs to /api/logs', payload);
+      // Debug: print payload before sending to help inspect what the browser actually posts
+      try { console.log('[DEBUG] /api/logs payload (adhd):', JSON.stringify(payload).slice(0,2000)); } catch(e) {}
+      const logsResp = await fetch('http://localhost:5000/api/logs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const respText = await logsResp.text();
+      if (!logsResp.ok) console.error('❌ Failed to save ADHD raw logs', logsResp.status, respText);
+      else {
+        try { const jr = JSON.parse(respText); console.log('✅ ADHD raw logs saved:', jr); }
+        catch { console.log('✅ ADHD raw logs saved (non-json response):', respText); }
+      }
+    } catch (err) {
+      console.error('❌ Error saving ADHD raw logs:', err);
     }
-  } catch (error) {
-    console.error('❌ Exception occurred while saving ADHD game data:');
-    console.error('❌ Error message:', error.message);
-    console.error('❌ Error stack:', error.stack);
-    console.error('❌ Full error object:', error);
-    alert(`❌ Error saving ADHD game data: ${error.message}`);
+
+    // 2) If userId exists, also send a full report to /api/reports (reportController expects userId)
+    if (userId) {
+      try {
+        const analysis = analyzePerformance(eventLog);
+        const gameData = {
+          userId,
+          gameType: 'NeuroMatrix-ADHD',
+          scores: {
+            motorControl: 0,
+            cognitiveLoad: Math.round(analysis.overallAccuracy * 100),
+            stressManagement: Math.max(0, 100 - Math.round(analysis.rtStd / 10)),
+            behavioralStability: Math.round(analysis.twoBackAccuracy * 100),
+            neuroBalance: Math.round((analysis.overallAccuracy + analysis.twoBackAccuracy) * 50),
+            accuracy: Math.round(analysis.overallAccuracy * 100),
+            speed: Math.max(0, 100 - Math.round(analysis.avgRT / 10)),
+            consistency: Math.max(0, 100 - Math.round(analysis.rtStd / 10)),
+            flexibility: Math.round(analysis.twoBackAccuracy * 100),
+            memory: Math.round(analysis.twoBackAccuracy * 100)
+          },
+          performanceLog: eventLog,
+          gameMetrics: {
+            totalTrials: eventLog.length,
+            overallAccuracy: analysis.overallAccuracy,
+            averageReactionTime: analysis.avgRT,
+            reactionTimeStd: analysis.rtStd,
+            twoBackAccuracy: analysis.twoBackAccuracy,
+            adhdIndicator: analysis.adhdIndicator,
+            totalTime: 60000
+          },
+          summary: [`ADHD Game completed with ${eventLog.length} trials`],
+          aiAnalysis: 'ADHD game performance analysis pending'
+        };
+
+        const response = await fetch('http://localhost:5000/api/reports', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(gameData)
+        });
+        if (response.ok) {
+          const result = await response.json();
+          console.log('✅ ADHD game report saved:', result);
+        } else {
+          console.error('❌ Failed to save ADHD report', response.status, await response.text());
+        }
+      } catch (err) {
+        console.error('❌ Error sending ADHD report to /api/reports:', err);
+      }
+    } else {
+      console.log('ℹ️ No logged-in user; raw logs were saved under guestId (if present).');
+    }
+  } catch (err) {
+    console.error('❌ Exception occurred while saving ADHD game data:', err);
   }
-  
+
   console.log('🎮 ===== ADHD GAME DATA SAVE COMPLETE =====');
 };
 
-const generateTrial = (rule, history) => {
+const generateTrial = (rule: string, history: EventEntry[]) : Trial => {
   const shape = rand(STIMULI.shapes);
   const colorName = rand(STIMULI.colors);
-  let correctResponse = 'right';
+  let correctResponse: 'left' | 'right' = 'right';
   if (rule === 'shape') {
     correctResponse = ['circle', 'square'].includes(shape) ? 'left' : 'right';
   } else if (rule === 'color') {
     correctResponse = ['red', 'blue'].includes(colorName) ? 'left' : 'right';
   } else if (rule === '2-back') {
-    const twoBack = history[history.length - 2];
+    // Filter history to only include trials from the current 2-back block
+    const twoBackBlockHistory = history.filter((e: EventEntry) => e.blockKey === '2back');
+    // Get the trial from 2 positions back in the current block
+    const twoBack = twoBackBlockHistory[twoBackBlockHistory.length - 2];
     correctResponse = twoBack && twoBack.stimulusShape === shape ? 'left' : 'right';
   }
   return { shape, colorName, colorValue: STIMULI.colorMap[colorName], correctResponse };
 };
 
-const mean = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
-const std = (arr) => {
+const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+const std = (arr: number[]) => {
   if (!arr.length) return 0;
   const m = mean(arr);
   return Math.sqrt(arr.reduce((s, x) => s + (x - m) * (x - m), 0) / arr.length);
 };
 
-function downloadJSON(data, filename = 'neuromatrix_results.json') {
+function downloadJSON(data: any, filename = 'neuromatrix_results.json') {
   const uri = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
   const link = document.createElement('a');
   link.href = uri;
@@ -224,7 +239,7 @@ function downloadJSON(data, filename = 'neuromatrix_results.json') {
 }
 
 // ---------- UI PRIMITIVES ----------
-const ShapeSVG = ({ shape, color }) => {
+const ShapeSVG = ({ shape, color }: { shape: string; color: string }) => {
   switch (shape) {
     case 'circle':
       return <circle cx="50" cy="50" r="40" fill={color} />;
@@ -315,14 +330,14 @@ const HUD = ({ current, total, timeLeft }) => {
 
 const GameScreen = ({ onComplete }) => {
   const [blockIndex, setBlockIndex] = useState(0);
-  const [trialIndex, setTrialIndex] = useState(0);
-  const [currentTrial, setCurrentTrial] = useState(null);
-  const [eventLog, setEventLog] = useState([]);
-  const [feedback, setFeedback] = useState(null);
-  const [showRuleChange, setShowRuleChange] = useState(false);
-  const startRef = useRef(null);
-  const [timeLeft, setTimeLeft] = useState(20);
-  const [gameStartTime] = useState(Date.now());
+  const [trialIndex, setTrialIndex] = useState<number>(0);
+  const [currentTrial, setCurrentTrial] = useState<Trial | null>(null);
+  const [eventLog, setEventLog] = useState<EventEntry[]>([]);
+  const [feedback, setFeedback] = useState<'correct' | 'incorrect' | null>(null);
+  const [showRuleChange, setShowRuleChange] = useState<boolean>(false);
+  const startRef = useRef<number | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number>(20);
+  const [gameStartTime] = useState<number>(Date.now());
 
   useEffect(() => {
     sfx.init();
@@ -408,12 +423,13 @@ const GameScreen = ({ onComplete }) => {
     return () => clearTimeout(id);
   }, [showRuleChange]);
 
-  const handleResponse = (side) => {
+  const handleResponse = (side: 'left' | 'right') => {
     if (!currentTrial || feedback) return;
     
     // --- MODIFICATION: Capture high-precision timestamps ---
     const responsePerfTime = performance.now();
-    const rt = responsePerfTime - startRef.current;
+    const start = startRef.current ?? responsePerfTime;
+    const rt = responsePerfTime - start;
     const responseTimestamp = new Date();
     const stimulusAppearanceTimestamp = new Date(responseTimestamp.getTime() - rt);
     
@@ -423,6 +439,7 @@ const GameScreen = ({ onComplete }) => {
     const isPractice = currentBlock.rule === '2-back' && trialIndex < 2;
 
     const entry = {
+      level: 1,
       trialNumber: eventLog.length,
       blockKey: currentBlock.key,
       blockName: currentBlock.name,
@@ -547,7 +564,7 @@ const GameScreen = ({ onComplete }) => {
   );
 };
 
-const InsightCard = ({ title, icon, text }) => (
+const InsightCard = ({ title, icon, text }: { title: string; icon: React.ReactNode; text: string }) => (
   <div className="bg-gradient-to-br from-black/40 to-slate-900/40 border border-slate-800 p-4 rounded-xl">
     <div className="flex items-center gap-3 mb-2">
       <div className="p-2 rounded-md bg-cyan-900/10 text-cyan-300">{icon}</div>
@@ -627,19 +644,18 @@ const analyzePerformance = (eventLog) => {
 };
 
 // --- MODIFICATION: Updated report screen with detailed log table ---
-const ReportScreen = ({ analysis, onRestart }) => {
+const ReportScreen = ({ analysis, onRestart }: { analysis: any; onRestart: () => void }) => {
   if (!analysis) return null;
   const { radarData, lineData, switchPoints, adhdIndicator, insights, eventLog } = analysis;
 
-  const formatTimestamp = (isoString) => {
+  const formatTimestamp = (isoString?: string) => {
     if (!isoString) return '';
     return new Date(isoString).toLocaleTimeString('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      fractionalSecondDigits: 3,
       hour12: false,
-    });
+    } as Intl.DateTimeFormatOptions);
   };
 
   return (
@@ -676,7 +692,7 @@ const ReportScreen = ({ analysis, onRestart }) => {
               <YAxis stroke="#94a3b8" />
               <Tooltip contentStyle={{ backgroundColor: '#0f1724', border: '1px solid #334155' }} />
               <Line type="monotone" dataKey="RT" stroke="#8b5cf6" strokeWidth={2} dot={false} />
-              {switchPoints.map(p => <ReferenceLine key={p.trial} x={p.trial} stroke="#f59e0b" strokeDasharray="4 4" />)}
+              {switchPoints.map((p: { trial: number }) => <ReferenceLine key={p.trial} x={p.trial} stroke="#f59e0b" strokeDasharray="4 4" />)}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -712,7 +728,7 @@ const ReportScreen = ({ analysis, onRestart }) => {
               </tr>
             </thead>
             <tbody className="text-slate-300">
-              {eventLog.map(log => (
+              {eventLog.map((log: EventEntry) => (
                 <tr key={log.trialNumber} className="border-t border-slate-800 hover:bg-slate-800/50">
                   <td className="p-2">{log.trialNumber + 1}</td>
                   <td className="p-2">{log.blockName}</td>
@@ -749,16 +765,30 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
     const userId = localStorage.getItem('userId');
     console.log('👤 Current userId from localStorage:', userId);
     
-    // Test backend connectivity
+    // Check play availability (enforce server-side play limits earlier)
     try {
-      console.log('🌐 Testing backend connectivity...');
-      const testResponse = await fetch('http://localhost:5000/api/reports/test');
-      console.log('✅ Backend test response:', testResponse.status);
+      const guestId = localStorage.getItem('guestId');
+      const checkPayload: any = { checkOnly: true };
+      if (userId) checkPayload.userId = userId;
+      else if (guestId) checkPayload.guestId = guestId;
+
+      console.log('🌐 Checking play availability before starting...', checkPayload);
+      const checkResp = await fetch('http://localhost:5000/api/logs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkPayload)
+      });
+      if (checkResp.ok) {
+        console.log('✅ Play allowed — starting game');
+        setStage('game');
+      } else {
+        const txt = await checkResp.json().catch(() => ({}));
+        const msg = txt && txt.message ? txt.message : 'You are not allowed to play at this time.';
+        const next = txt && txt.nextAllowedAt ? ` Next allowed at: ${txt.nextAllowedAt}` : '';
+        alert(msg + next);
+      }
     } catch (error) {
-      console.error('❌ Backend connectivity test failed:', error);
+      console.error('❌ Play availability check failed, proceeding to start anyway:', error);
+      setStage('game');
     }
-    
-    setStage('game');
   };
 
   const handleComplete = (eventLog) => {

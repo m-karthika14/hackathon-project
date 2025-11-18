@@ -43,13 +43,38 @@ const LoginPage: React.FC = () => {
   };
 
   const handleGuestLogin = () => {
-    // Set guest user data
-    const guestId = 'guest_' + Date.now();
-    localStorage.setItem('userId', guestId);
-    localStorage.setItem('userEmail', 'guest@mindmirror.ai');
-    localStorage.setItem('isLoggedIn', 'guest');
-    
-    navigate('/home');
+    (async () => {
+      try {
+        // Always generate a fresh guest id for each click
+        const newGuestId = `guest_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+        const payload: any = { guestId: newGuestId };
+
+        console.log('🔐 Requesting NEW guest account from backend...', payload);
+        const resp = await fetch('http://localhost:5000/api/auth/guest', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          console.error('❌ Guest creation failed:', data);
+          alert('Unable to create guest account: ' + (data && data.message ? data.message : 'Server error'));
+          return;
+        }
+
+        console.log('✅ Guest created:', data);
+        // Overwrite guestId and userId locally with the freshly created guest
+        if (data.guestId) localStorage.setItem('guestId', data.guestId);
+        else localStorage.setItem('guestId', newGuestId);
+        if (data.userId) localStorage.setItem('userId', data.userId);
+        localStorage.setItem('userEmail', 'guest@mindmirror.ai');
+        localStorage.setItem('isLoggedIn', 'guest');
+
+        alert(`Logged in as guest (${data.guestId || newGuestId}). Account saved to database.`);
+        navigate('/home');
+      } catch (err) {
+        console.error('Error creating guest account:', err);
+        alert('Error creating guest account. Check console.');
+      }
+    })();
   };
 
   useEffect(() => {

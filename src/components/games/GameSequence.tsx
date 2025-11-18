@@ -11,6 +11,18 @@ const GameSequence: React.FC<GameSequenceProps> = () => {
   const [currentGame, setCurrentGame] = useState<'maze' | 'adhd'>('maze');
   const navigate = useNavigate();
   
+  // Ensure a stable session id exists for the whole sequence (links maze -> adhd)
+  useEffect(() => {
+    let sessionId = localStorage.getItem('gameSessionId');
+    if (!sessionId) {
+      sessionId = `session_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+      localStorage.setItem('gameSessionId', sessionId);
+      console.log('🔖 GameSequence: created new gameSessionId', sessionId);
+    } else {
+      console.log('🔖 GameSequence: using existing gameSessionId', sessionId);
+    }
+  }, []);
+  
   const handleMazeComplete = () => {
     console.log('🎮 GameSequence: Maze game completed, transitioning to ADHD game...');
     console.log('🔄 GameSequence: Current game state before transition:', currentGame);

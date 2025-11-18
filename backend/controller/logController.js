@@ -51,13 +51,27 @@ exports.saveGameLogs = async (req, res) => {
 
     // Play limits disabled by request: guests and users may play unlimited times.
 
-    // Filter incoming logs to level 1 only for specified games (frontend should also do this)
-    let filteredLogs = logs;
+    // Flexible handling: maze sometimes sends a single run object (with nested arrays like errorLog),
+    // sometimes an array of per-trial objects. Normalize both into an array of entries to persist.
+    let filteredLogs = [];
     try {
       if (gameKey === 'maze') {
-        filteredLogs = Array.isArray(logs) ? logs.filter(l => l && l.level === 1) : [];
+        if (Array.isArray(logs)) {
+          // keep only level-1 trial logs when frontend provides per-trial entries
+          filteredLogs = logs.filter(l => l && l.level === 1);
+        } else if (logs && typeof logs === 'object') {
+          // single-run object (e.g. contains path, errorLog, completionTime) — save as one entry
+          filteredLogs = [logs];
+        } else {
+          filteredLogs = [];
+        }
       } else if (gameKey === 'adhd') {
         filteredLogs = Array.isArray(logs) ? logs.filter(l => l && l.level === 1) : [];
+      } else {
+        // Generic fallback: accept array payloads or wrap single objects
+        if (Array.isArray(logs)) filteredLogs = logs;
+        else if (logs && typeof logs === 'object') filteredLogs = [logs];
+        else filteredLogs = [];
       }
     } catch (e) {
       filteredLogs = [];
@@ -66,8 +80,41 @@ exports.saveGameLogs = async (req, res) => {
     // Ensure gameKey subfield exists and is an array of log entries
     const existing = user.games[gameKey] || { logs: [] };
 
+    // Helper to enrich an entry. For maze run-objects, also add IST/UTC to nested errorLog items when present.
+    const enrichEntry = (entry) => {
+      const now = new Date();
+      const createdAtUTC = now.toISOString();
+      const createdAtIST = now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+
+      const base = {
+        ...(entry || {}),
+        sessionId: sessionId || null,
+        createdAtUTC,
+        createdAtIST
+      };
+
+      // If this is a maze-run object with nested errorLog array, enrich nested items too
+      try {
+        if (base.errorLog && Array.isArray(base.errorLog)) {
+          base.errorLog = base.errorLog.map(ev => {
+            // use existing time if present to compute IST for the nested event
+            const evTime = ev && ev.time ? new Date(ev.time) : new Date();
+            return {
+              ...(ev || {}),
+              createdAtUTC: evTime.toISOString(),
+              createdAtIST: evTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
+            };
+          });
+        }
+      } catch (nestedErr) {
+        // ignore nested enrichment errors — we still save the base entry
+      }
+
+      return base;
+    };
+
     // Enrich each incoming log with sessionId and createdAt so we can later query/deduplicate
-    const enriched = Array.isArray(filteredLogs) ? filteredLogs.map(l => ({ ...(l || {}), sessionId: sessionId || null, createdAt: new Date() })) : [];
+    const enriched = Array.isArray(filteredLogs) ? filteredLogs.map(enrichEntry) : [];
 
     console.log(`[saveGameLogs] appending ${enriched.length} entries to user ${user._id} for gameKey=${gameKey}`);
     if (enriched.length > 0) console.log('[saveGameLogs] sample entry:', JSON.stringify(enriched[0]).slice(0, 1000));

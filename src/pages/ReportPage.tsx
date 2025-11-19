@@ -62,6 +62,28 @@ const ReportPage = () => {
     fetchAllReports();
   }, []);
 
+  // Handler to mark session end (Finish Assessment) — posts to /api/logs with end:true
+  const handleFinishAssessment = async () => {
+    try {
+      const userId = localStorage.getItem('userId');
+      const guestId = localStorage.getItem('guestId');
+      const sessionId = localStorage.getItem('gameSessionId') || null;
+      const payload: any = { end: true, gameKey: 'adhd', sessionId };
+      if (userId) payload.userId = userId; else if (guestId) payload.guestId = guestId;
+      const resp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (resp.ok) {
+        console.log('Session end recorded from ReportPage');
+        alert('Session finished and recorded.');
+      } else {
+        console.warn('Failed to record session end:', resp.status, await resp.text());
+        alert('Failed to record session end');
+      }
+    } catch (e) {
+      console.error('Error finishing session:', e);
+      alert('Error finishing session');
+    }
+  };
+
   useEffect(() => {
     const storedScores = sessionStorage.getItem('gameScores');
     if (storedScores) {
@@ -290,9 +312,12 @@ const ReportPage = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {/* Main Content */}
           <div className="md:col-span-2">
-            <div className="my-8">
+            <div className="my-8 flex items-center gap-4">
               <NeonButton onClick={handleGenerateInsights} disabled={isLoading}>
                 {isLoading ? 'Generating...' : 'Analyze Sample Data'}
+              </NeonButton>
+              <NeonButton id="finish-assessment-button" onClick={handleFinishAssessment} disabled={isLoading} variant={"primary"}>
+                Finish Assessment
               </NeonButton>
             </div>
 

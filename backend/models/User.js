@@ -51,11 +51,27 @@ userSchema.statics.createNewSession = async function (userId, opts = {}) {
   if (!user) throw new Error('User not found');
   if (!Array.isArray(user.sessions)) user.sessions = [];
 
+  // If an active (not-ended) session already exists and the caller did not
+  // explicitly request a brand-new session (forceNew), reuse that session.
+  const existingActive = (user.sessions || []).slice().reverse().find(s => !s.isEnd) || null;
+  if (existingActive && !opts.forceNew) {
+    // If caller asked to mark start on this call, ensure start flags/times are set
+    if (opts.isStart) {
+      const now = new Date();
+      existingActive.startTimeUTC = existingActive.startTimeUTC || now;
+      existingActive.startTimeIST = existingActive.startTimeIST || istStringFor(now);
+      existingActive.isStart = true;
+    }
+    if (typeof user.markModified === 'function') user.markModified('sessions');
+    await user.save();
+    return { user, session: existingActive };
+  }
+
   const now = new Date();
   const sessionNumber = (user.sessions.length || 0) + 1;
   const session = {
     sessionNumber,
-    sessionId: opts.sessionId || null,
+    sessionId: opts.sessionId || `session_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
     startTimeUTC: opts.isStart ? now : (opts.startTimeUTC || null),
     startTimeIST: opts.isStart ? istStringFor(now) : (opts.startTimeIST || null),
     isStart: !!opts.isStart,
@@ -75,7 +91,7 @@ userSchema.statics.createNewSession = async function (userId, opts = {}) {
  * Find session by sessionId/sessionNumber, or most recent active session.
  * If createIfMissing is true, create a new session.
  */
-userSchema.statics.findOrCreateSession = async function (userId, { sessionId = null, sessionNumber = null, createIfMissing = true, isStart = false } = {}) {
+userSchema.statics.findOrCreateSession = async function (userId, { sessionId = null, sessionNumber = null, createIfMissing = false, isStart = false } = {}) {
   const User = this;
   const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
@@ -89,12 +105,13 @@ userSchema.statics.findOrCreateSession = async function (userId, { sessionId = n
     session = (user.sessions || []).slice().reverse().find(s => !s.isEnd) || null;
   }
 
+  // Only create a new session when explicitly requested via createIfMissing === true
   if (!session && createIfMissing) {
     const now = new Date();
     const sn = (user.sessions.length || 0) + 1;
     session = {
       sessionNumber: sn,
-      sessionId: sessionId || null,
+      sessionId: sessionId || `session_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
       startTimeUTC: isStart ? now : null,
       startTimeIST: isStart ? istStringFor(now) : null,
       isStart: !!isStart,
@@ -128,10 +145,22 @@ userSchema.statics.appendAdhdLog = async function (userId, dayNumber = 1, sessio
  *  - If game.start is false, set startTime and start=true on first appended log.
  */
 userSchema.statics.appendGameLog = async function (userId, gameType, dayNumber = 1, sessionNumber = null, logObj = {}) {
-  const res = await this.findOrCreateSession(userId, { sessionNumber, createIfMissing: true });
+  // Do NOT auto-create a session here. The canonical way to create a session
+  // is via startSessionGeneric (Start Assessment). We will only attach to an
+  // existing active (not-ended) session. If none exists, throw an error so the
+  // client can call Start Assessment first and reuse the sessionId.
+  const res = await this.findOrCreateSession(userId, { sessionNumber, createIfMissing: false });
   const { user, session } = res;
+  if (!session) {
+    throw new Error('No active session found. Call Start Assessment to create a session before sending game logs.');
+  }
 
   session.games = session.games || [];
+
+  // Debug: log incoming append request
+  try {
+    console.log(`[appendGameLog] user=${String(userId)} game=${gameType} day=${dayNumber} sessionNumber=${session.sessionNumber} incomingLog=${JSON.stringify(logObj).slice(0,2000)}`);
+  } catch (e) { /* ignore logging errors */ }
 
   // Find game entry of same type & day that isn't ended
   let game = session.games.slice().reverse().find(g => g.type === gameType && g.day === dayNumber && !g.end) || null;
@@ -147,10 +176,15 @@ userSchema.statics.appendGameLog = async function (userId, gameType, dayNumber =
     game.start = true;
   }
 
-  game.logs = Array.isArray(game.logs) ? game.logs.concat([logObj]) : [logObj];
+  // Append into existing logs array to preserve subdocument behavior
+  if (!Array.isArray(game.logs)) game.logs = [];
+  game.logs.push(logObj);
 
   if (typeof user.markModified === 'function') user.markModified('sessions');
-  await user.save();
+  const saved = await user.save();
+  try {
+    console.log(`[appendGameLog] saved user=${String(userId)} session=${session.sessionNumber} game=${gameType} totalLogsForGame=${(game.logs && game.logs.length) || 0}`);
+  } catch (e) {}
   return { ok: true, userId: user._id.toString(), gameType, day: dayNumber, session: session.sessionNumber };
 };
 

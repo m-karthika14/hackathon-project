@@ -1,3 +1,5 @@
+import { BrainCircuit, Activity, Scaling, ShieldAlert, Target, GitCommitHorizontal, CheckCircle, XCircle, Download, RotateCcw, ArrowLeft, ArrowRight, } from 'lucide-react';
+import NeonButton from '../ui/NeonButton';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ADHDParticleBackground from './ADHDParticleBackground';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -15,20 +17,7 @@ import {
   CartesianGrid,
   ReferenceLine,
 } from 'recharts';
-import {
-  BrainCircuit,
-  Activity,
-  Scaling,
-  ShieldAlert,
-  Target,
-  GitCommitHorizontal,
-  CheckCircle,
-  XCircle,
-  Download,
-  RotateCcw,
-  ArrowLeft,
-  ArrowRight,
-} from 'lucide-react';
+ 
 import * as Tone from 'tone';
 
 // -----------------------------
@@ -334,6 +323,39 @@ const HUD = ({ current, total, timeLeft }) => {
         </div>
       </div>
     </div>
+  );
+};
+
+const FinishButton: React.FC = () => {
+  const [busy, setBusy] = React.useState(false);
+  const [done, setDone] = React.useState(false);
+
+  const handleFinish = async () => {
+    if (busy || done) return;
+    setBusy(true);
+    try {
+      const userId = localStorage.getItem('userId');
+      const guestId = localStorage.getItem('guestId');
+      const sessionId = localStorage.getItem('gameSessionId') || null;
+      // Include explicit end timestamp and isEnd flag so backend can record session end
+      const payload: any = { end: true, gameKey: 'adhd', sessionId, isEnd: true, endTime: new Date().toISOString() };
+      if (userId) payload.userId = userId; else if (guestId) payload.guestId = guestId;
+      const resp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (resp.ok) {
+        setDone(true);
+        console.log('Session end recorded via Finish button');
+      } else {
+        console.warn('Failed to record session end:', resp.status, await resp.text());
+      }
+    } catch (e) {
+      console.error('Error calling finish endpoint:', e);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <NeonButton id="finish-assessment-button" onClick={handleFinish} disabled={busy || done} variant={done ? 'secondary' : 'primary'}>
+      {done ? 'Finished' : (busy ? 'Finishing...' : 'Finish Assessment')}
+    </NeonButton>
   );
 };
 
@@ -771,8 +793,14 @@ const analyzePerformance = (eventLog) => {
 
 // --- MODIFICATION: Updated report screen with detailed log table ---
 const ReportScreen = ({ analysis, onRestart }: { analysis: any; onRestart: () => void }) => {
-  if (!analysis) return null;
-  const { radarData, lineData, switchPoints, adhdIndicator, insights, eventLog } = analysis;
+  // Allow ReportScreen to render even if analysis is not yet available so the Finish
+  // Assessment button can be shown immediately after game completion.
+  const radarData = analysis?.radarData || [];
+  const lineData = analysis?.lineData || [];
+  const switchPoints = analysis?.switchPoints || [];
+  const adhdIndicator = analysis?.adhdIndicator || 0;
+  const insights = analysis?.insights || { consistency: '', flexibility: '', memory: '' };
+  const eventLog = analysis?.eventLog || [];
 
   const formatTimestamp = (isoString?: string) => {
     if (!isoString) return '';
@@ -792,8 +820,9 @@ const ReportScreen = ({ analysis, onRestart }: { analysis: any; onRestart: () =>
           <p className="text-sm text-slate-400">Summary of executive function metrics and behavioral insights.</p>
         </div>
         <div className="flex gap-3">
-          <motion.button whileHover={{ scale: 1.03 }} onClick={onRestart} className="px-4 py-2 rounded-xl bg-slate-700/40 border border-slate-600 flex items-center gap-2"><RotateCcw size={16}/> Play Again</motion.button>
-          <motion.button whileHover={{ scale: 1.03 }} onClick={() => downloadJSON(eventLog)} className="px-4 py-2 rounded-xl bg-indigo-600/80 flex items-center gap-2"><Download size={16}/> Export JSON</motion.button>
+          <NeonButton onClick={onRestart} variant="secondary" size="md"><RotateCcw size={16}/> Play Again</NeonButton>
+          <NeonButton onClick={() => downloadJSON(eventLog)} variant="primary" size="md"><Download size={16}/> Export JSON</NeonButton>
+          <FinishButton />
         </div>
       </div>
 
@@ -894,9 +923,17 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
     // Check play availability (enforce server-side play limits earlier)
     try {
       const guestId = localStorage.getItem('guestId');
+
+      // Ensure a fresh sessionId is generated for this play-through so the backend
+      // records exactly one session per game. Overwrite any existing session id.
+      const newSessionId = `adhd_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
+      localStorage.setItem('gameSessionId', newSessionId);
+
       const checkPayload: any = { checkOnly: true };
       if (userId) checkPayload.userId = userId;
       else if (guestId) checkPayload.guestId = guestId;
+      // include sessionId for server-side correlation (optional)
+      checkPayload.sessionId = newSessionId;
 
       console.log('🌐 Checking play availability before starting...', checkPayload);
       const checkResp = await fetch('http://localhost:5000/api/logs', {
@@ -909,6 +946,8 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
           const startPayload: any = { start: true };
           if (userId) startPayload.userId = userId; else if (guestId) startPayload.guestId = guestId;
           startPayload.gameKey = 'adhd';
+          // Provide the sessionId we generated so backend will create/find the single session
+          startPayload.sessionId = newSessionId;
           const startResp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(startPayload) });
           if (startResp.ok) {
             const jr = await startResp.json().catch(() => null);
@@ -1024,15 +1063,45 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
   telemetry.inputMethod = most;
 
       // Build telemetry entry to append to logs (preserve existing entries)
-      const telemetryEntry = { level: 1, eventType: 'adhd_telemetry', telemetry, createdAt: new Date().toISOString() };
+          const telemetryEntry = { level: 1, eventType: 'adhd_telemetry', telemetry, createdAt: new Date().toISOString() };
 
-      console.log('💾 Calling saveGameData from handleComplete with telemetry...');
-  const augmented = Array.isArray(eventLog) ? [...eventLog, telemetryEntry] : [telemetryEntry];
-  saveGameData(augmented as any).then(() => {
+          // Create a session end entry so the backend has an explicit end marker and timestamp
+          const sessionId = localStorage.getItem('gameSessionId') || null;
+          const userId = localStorage.getItem('userId') || null;
+          const guestId = localStorage.getItem('guestId') || null;
+          const endEntry = {
+            level: 1,
+            eventType: 'session_end',
+            isEnd: true,
+            endTime: new Date().toISOString(),
+            gameKey: 'adhd',
+            sessionId,
+            userId,
+            guestId,
+            createdAt: new Date().toISOString(),
+          };
+
+      console.log('💾 Calling saveGameData from handleComplete with telemetry and session end...');
+      const augmented = Array.isArray(eventLog) ? [...eventLog, telemetryEntry, endEntry] : [telemetryEntry, endEntry];
+
+      // Show report screen immediately so Finish button is available right away.
+      if (!onGameComplete) setStage('report');
+
+      saveGameData(augmented as any).then(async () => {
       console.log('✅ Save completed, now analyzing performance...');
+
+      // Tell backend to finalize the game/session by sending end:true so helper paths run
+      try {
+        const endPayload: any = { end: true, gameKey: 'adhd', sessionId };
+        if (userId) endPayload.userId = userId; else if (guestId) endPayload.guestId = guestId;
+        const endResp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(endPayload) });
+        if (endResp.ok) console.log('✅ End flag posted to backend');
+        else console.warn('⚠️ End flag POST failed:', endResp.status, await endResp.text());
+      } catch (e) { console.warn('⚠️ End flag POST error:', e); }
+
       const a = analyzePerformance(eventLog);
       setAnalysis(a);
-      
+
       // If onGameComplete is provided (game sequence), transition to next game
       // Otherwise show the report screen (standalone mode)
       if (onGameComplete) {
@@ -1041,11 +1110,21 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
       } else {
         setStage('report');
       }
-    }).catch(error => {
+    }).catch(async (error) => {
       console.error('❌ Save failed, but continuing to analysis:', error);
+
+      // Even if save failed, still attempt to mark end so backend session flags get set
+      try {
+        const endPayload: any = { end: true, gameKey: 'adhd', sessionId };
+        if (userId) endPayload.userId = userId; else if (guestId) endPayload.guestId = guestId;
+        const endResp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(endPayload) });
+        if (endResp.ok) console.log('✅ End flag posted to backend (after save error)');
+        else console.warn('⚠️ End flag POST failed (after save error):', endResp.status, await endResp.text());
+      } catch (e) { console.warn('⚠️ End flag POST error (after save error):', e); }
+
       const a = analyzePerformance(eventLog);
       setAnalysis(a);
-      
+
       // If onGameComplete is provided (game sequence), transition to next game
       // Otherwise show the report screen (standalone mode)
       if (onGameComplete) {

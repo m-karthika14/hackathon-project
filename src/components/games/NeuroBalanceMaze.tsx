@@ -959,21 +959,27 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
     const [gameState, setGameState] = useState<'start' | 'game'>('start');
 
     const handleGameComplete = useCallback(async (fullMetrics: Record<string, any>, log: any[], diagnostics?: any) => {
-        console.log(`🎮 handleGameComplete called!`);
-        console.log(`📊 Full metrics:`, fullMetrics);
-        console.log(`📝 Error log:`, log);
+    console.log(`🎮 handleGameComplete called!`);
+    console.log(`📊 Full metrics:`, fullMetrics);
+    console.log(`📝 Error log:`, log);
+
+    // Deep-copy metrics/logs/diagnostics immediately so async saves use
+    // a stable snapshot even if the component unmounts or refs reset.
+    const fullMetricsCopy = JSON.parse(JSON.stringify(fullMetrics || {}));
+    const errorLogCopy = JSON.parse(JSON.stringify(log || []));
+    const diagnosticsCopy = diagnostics ? JSON.parse(JSON.stringify(diagnostics)) : {};
         
         // Still save the data to MongoDB but don't show report
         // setGameState('report'); // Remove this line
-        const totalCollisions = Object.values(fullMetrics).reduce((acc: number, curr: any) => acc + curr.wallCollisions, 0);
-        const totalShortest = Object.values(fullMetrics).reduce((acc: number, curr: any) => acc + curr.shortestPath, 0);
-        const totalMoves = Object.values(fullMetrics).reduce((acc: number, curr: any) => acc + curr.moves, 0);
+    const totalCollisions = Object.values(fullMetricsCopy).reduce((acc: number, curr: any) => acc + (curr.wallCollisions || 0), 0);
+    const totalShortest = Object.values(fullMetricsCopy).reduce((acc: number, curr: any) => acc + (curr.shortestPath || 0), 0);
+    const totalMoves = Object.values(fullMetricsCopy).reduce((acc: number, curr: any) => acc + (curr.moves || 0), 0);
         const pathEfficiency = totalMoves > 0 ? totalShortest / totalMoves : 1;
         const motorControlScore = Math.max(0, 100 - totalCollisions * 5);
         const cognitiveLoadScore = Math.min(100, pathEfficiency * 100);
-        const l2Metrics = fullMetrics[2] || { wallCollisions: 0 };
+    const l2Metrics = fullMetricsCopy[2] || { wallCollisions: 0 };
         const stressScore = Math.max(0, 100 - l2Metrics.wallCollisions * 8);
-        const totalSharpTurns = Object.values(fullMetrics).reduce((acc: number, curr: any) => acc + curr.sharpTurns, 0);
+    const totalSharpTurns = Object.values(fullMetricsCopy).reduce((acc: number, curr: any) => acc + (curr.sharpTurns || 0), 0);
         const stabilityScore = totalMoves > 0 ? Math.max(0, 100 - (totalSharpTurns / totalMoves) * 500) : 100;
         const neuroBalanceScore = (motorControlScore + cognitiveLoadScore + stressScore + stabilityScore) / 4;
         const scores = {
@@ -993,7 +999,7 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
         ];
 
         // Calculate total completion time
-        const totalCompletionTime = Object.values(fullMetrics).reduce((acc: number, curr: any) => acc + (curr.completionTime || 0), 0);
+    const totalCompletionTime = Object.values(fullMetricsCopy).reduce((acc: number, curr: any) => acc + (curr.completionTime || 0), 0);
 
         // Prepare game metrics
         const gameMetrics = {
@@ -1025,7 +1031,7 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
         
         console.log('=== SAVING PERFORMANCE DATA TO MONGODB ===');
         console.log('User ID:', userId);
-        console.log('Performance Log:', log);
+    console.log('Performance Log:', errorLogCopy);
         console.log('Scores:', scores);
         console.log('Game Metrics:', gameMetrics);
         
@@ -1036,7 +1042,7 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                     userId,
                     gameType: 'neurobalance',
                     scores,
-                    performanceLog: log,
+                    performanceLog: errorLogCopy,
                     gameMetrics,
                     summary,
                     aiAnalysis: "Analyzing your performance..."
@@ -1080,7 +1086,7 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                     const lvlStartMs = lvlMetrics.startTime || null;
                     const lvlCompletionMs = lvlMetrics.completionTime || null;
                     // Filter error log entries for this level
-                    const lvlErrorLog = (log || []).filter((e: any) => e && e.level === lvlNum).map((e: any) => ({ ...e }));
+                    const lvlErrorLog = (errorLogCopy || []).filter((e: any) => e && e.level === lvlNum).map((e: any) => ({ ...e }));
 
                     // Collision events (wall collision and blocked by moving wall)
                     const collisionEvents = lvlErrorLog.filter((e: any) => e.event && /collision|blocked/i.test(e.event));
@@ -1113,10 +1119,10 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                     }
 
                     // Idle events for this level
-                    const idleEvents = ((diagnostics && diagnostics.idleSegments) || []).filter((s: any) => s.level === lvlNum).map((s: any) => ({ start: s.start, durationSec: s.durationSec }));
+                    const idleEvents = ((diagnosticsCopy && diagnosticsCopy.idleSegments) || []).filter((s: any) => s.level === lvlNum).map((s: any) => ({ start: s.start, durationSec: s.durationSec }));
 
                     // Move timestamps that fall inside this level's timeframe
-                    const movesForLevel = ((diagnostics && diagnostics.moveTimestamps) || []).filter((m: any) => {
+                    const movesForLevel = ((diagnosticsCopy && diagnosticsCopy.moveTimestamps) || []).filter((m: any) => {
                         if (!lvlStartMs) return true;
                         const t = m.time;
                         if (lvlCompletionMs) return t >= lvlStartMs && t <= (lvlStartMs + lvlCompletionMs);
@@ -1145,14 +1151,14 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                         jitter: { sharpTurns: lvlMetrics.sharpTurns || 0, microMovements: lvlMetrics.microMovements || 0 },
                         decisionLatency: lvlMetrics.decisionLatency || null,
                         moveTimestamps: movesForLevel,
-                        inputMethod: (diagnostics && diagnostics.inputMethod) || 'unknown'
+                        inputMethod: (diagnosticsCopy && diagnosticsCopy.inputMethod) || 'unknown'
                     };
                 };
 
                 const levelLogs: any[] = [];
-                Object.keys(fullMetrics || {}).forEach(k => {
+                Object.keys(fullMetricsCopy || {}).forEach(k => {
                     const n = Number(k);
-                    const lm = fullMetrics[n];
+                    const lm = fullMetricsCopy[n];
                     if (lm) levelLogs.push(buildLevelEntry(n, lm));
                 });
 
@@ -1178,6 +1184,17 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                 } else {
                     const lr = await logsResp.json();
                     console.log('✅ Raw maze logs saved:', lr);
+                    // After saving logs, mark the game/session as ended so backend sets endTime/isEnd
+                    try {
+                        const sessionId = localStorage.getItem('gameSessionId') || null;
+                        const guestId = localStorage.getItem('guestId');
+                        const userId = localStorage.getItem('userId');
+                        const endPayload: any = { end: true, gameKey: 'maze', sessionId };
+                        if (userId) endPayload.userId = userId; else if (guestId) endPayload.guestId = guestId;
+                        const endResp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(endPayload) });
+                        if (endResp.ok) console.log('✅ End flag posted to backend for maze');
+                        else console.warn('⚠️ End flag POST failed for maze:', endResp.status, await endResp.text());
+                    } catch (e) { console.warn('⚠️ End flag POST error for maze:', e); }
                 }
             } catch (err) {
                 console.error('❌ Error sending raw maze logs:', err);
@@ -1188,7 +1205,7 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
         (async () => {
             try {
                 const systemPrompt = "You are a neurocognitive performance analyst. Your task is to analyze a user's performance in a maze game and provide a detailed, constructive report. First, compare the user's scores against general population benchmarks for similar computer-based cognitive tasks. Second, specifically identify any scores that are 'Average' or 'Needs Improvement' as 'risk flags' and explain what gameplay patterns from the error log might have contributed to them. Third, analyze the precise, real-time timestamps in the error log to identify behavioral patterns like error clustering (multiple mistakes in a short period), hesitation, or difficulty adapting after a specific event. Your feedback should be encouraging, professional, and presented in 3-4 clear paragraphs. Address the user directly. Do not mention that you are an AI.";
-                const userQuery = `Analyze the following user performance data from the NeuroBalance Maze game and provide your detailed, comparative feedback. Please find and use normative data for cognitive tests as a baseline for comparison.\n\nScores:\n${JSON.stringify(scores, null, 2)}\n\nError Log (with real-time timestamps):\n${JSON.stringify(log, null, 2)}`;
+                const userQuery = `Analyze the following user performance data from the NeuroBalance Maze game and provide your detailed, comparative feedback. Please find and use normative data for cognitive tests as a baseline for comparison.\n\nScores:\n${JSON.stringify(scores, null, 2)}\n\nError Log (with real-time timestamps):\n${JSON.stringify(errorLogCopy, null, 2)}`;
                 const apiKey = import.meta.env.VITE_GOOGLE_AI_API_KEY;
                 if (!apiKey) {
                     console.log("AI Analysis is disabled. API key not configured.");
@@ -1216,7 +1233,7 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                         body: JSON.stringify({
                             userId,
                             scores,
-                            performanceLog: log,
+                            performanceLog: errorLogCopy,
                             gameMetrics,
                             summary,
                             aiAnalysis: analysisText
@@ -1239,7 +1256,19 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                 try {
                     const guestId = localStorage.getItem('guestId');
                     const userId = localStorage.getItem('userId');
-                    const payload: any = { checkOnly: true };
+
+                    // Ensure we use a single stable sessionId for the entire play.
+                    // Do NOT overwrite an existing sessionId (created earlier by GameSequence).
+                    let existingSessionId = localStorage.getItem('gameSessionId');
+                    if (!existingSessionId) {
+                        existingSessionId = `maze_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
+                        localStorage.setItem('gameSessionId', existingSessionId);
+                        console.log('NeuroBalanceMaze: created new gameSessionId', existingSessionId);
+                    } else {
+                        console.log('NeuroBalanceMaze: reusing existing gameSessionId', existingSessionId);
+                    }
+
+                    const payload: any = { checkOnly: true, sessionId: existingSessionId };
                     if (userId) payload.userId = userId; else if (guestId) payload.guestId = guestId;
                     const resp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                     if (resp.ok) {
@@ -1250,6 +1279,8 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                             const startPayload: any = { start: true };
                             if (userId) startPayload.userId = userId; else if (guestId) startPayload.guestId = guestId;
                             startPayload.gameKey = 'maze';
+                            // Provide the sessionId we generated so backend will create the single session for this play
+                            startPayload.sessionId = existingSessionId;
                             const startResp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(startPayload) });
                             if (startResp.ok) {
                                 const jr = await startResp.json().catch(() => null);

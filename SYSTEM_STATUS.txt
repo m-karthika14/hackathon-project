@@ -1,0 +1,60 @@
+```
+🎯 MINDMIRROR INSIGHTS ENGINE - LIVE STATUS
+============================================
+
+✅ BACKEND (Port 5000)
+   └─ GET /api/auth/adhd-analysis
+      └─ Fetches from: adhdanalysisreports collection
+      └─ Returns: cognitivePerformance score
+
+✅ FRONTEND (Port 5175)
+   └─ ReportPage.tsx
+      └─ Fetches: /api/auth/adhd-analysis
+      └─ Extracts: cognitivePerformance
+      └─ Selects Zone: getZoneByScore(score)
+      └─ Displays: 3 insights + 3 tips
+
+✅ INSIGHTS ENGINE
+   └─ 25 Zones (1-100 in blocks of 4)
+   └─ 75 Unique Insights
+   └─ 75 Personalized Health Tips
+   └─ Dynamic Color Themes
+
+============================================
+
+📊 CURRENT USER: 691e068b0c4975c081cec5eb
+
+Score: 36.33 / 100
+Zone: Zone 9 (33-36) - Nearly Average
+Theme: Yellow
+
+Insights:
+1. Attention is reaching average performance levels.
+2. Stress signals are present but controlled.
+3. Motor responses are generally stable with minor hiccups.
+
+Tips:
+1. 🔼 Better Oxygen Flow - Straighten your spine
+2. ☀️ Reduce Glare - Reduce screen glare
+3. ⏰ Mindful Pause - Take 30-second pause
+
+============================================
+
+🔗 DATA FLOW:
+
+MongoDB Collection: adhdanalysisreports
+   └─ Document: { userId, gamesAnalyzed[] }
+      └─ Game: { metrics: { cognitivePerformance: 36.33 } }
+         └─ Backend API: GET /api/auth/adhd-analysis
+            └─ Frontend: ReportPage.tsx
+               └─ Insights Engine: getZoneByScore(36.33)
+                  └─ Zone 9 Selected
+                     └─ Display 3 Insights + 3 Tips
+                        └─ Yellow Theme Applied
+
+============================================
+
+✅ SYSTEM STATUS: FULLY OPERATIONAL
+
+All components connected and working!
+```

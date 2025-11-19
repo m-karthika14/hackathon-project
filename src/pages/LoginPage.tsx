@@ -25,10 +25,17 @@ const LoginPage: React.FC = () => {
         const data = await response.json();
         console.log('Login successful:', data);
         
-        // Save user data to localStorage
+        // Save user data to localStorage INCLUDING THE JWT TOKEN
         localStorage.setItem('userId', data.userId);
         localStorage.setItem('userEmail', data.email);
         localStorage.setItem('isLoggedIn', 'true');
+        
+        // Save JWT token for API authentication
+        if (data.token) {
+          localStorage.setItem('token', data.token);
+          console.log('✅ JWT token saved to localStorage');
+        }
+        
         // Generate a fresh sessionId for this signed-in session so subsequent game logs
         // are grouped under the same user but associated with a unique session.
         const sessionId = `session_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
@@ -72,10 +79,17 @@ const LoginPage: React.FC = () => {
       }
 
       console.log('Register successful:', data);
-      // Save user data and create session id
+      // Save user data and create session id INCLUDING JWT TOKEN
       if (data.userId) localStorage.setItem('userId', data.userId);
       if (data.email) localStorage.setItem('userEmail', data.email);
       localStorage.setItem('isLoggedIn', 'true');
+      
+      // Save JWT token for API authentication
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        console.log('✅ JWT token saved to localStorage');
+      }
+      
       const sessionId = `session_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
       localStorage.setItem('gameSessionId', sessionId);
       // Clear any guestId
@@ -114,6 +128,12 @@ const LoginPage: React.FC = () => {
         if (data.userId) localStorage.setItem('userId', data.userId);
         localStorage.setItem('userEmail', 'guest@mindmirror.ai');
         localStorage.setItem('isLoggedIn', 'guest');
+        
+        // Save JWT token for API authentication
+        if (data.token) {
+          localStorage.setItem('token', data.token);
+          console.log('✅ JWT token saved to localStorage for guest');
+        }
 
   // Create a session id for this guest session as well
   const sessionId = `session_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;

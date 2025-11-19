@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Quick Test - Set User & View Report</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            padding: 40px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #00ff00;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 30px;
+            border-radius: 15px;
+            border: 2px solid #00ff00;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+        }
+        h1 {
+            text-align: center;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+            margin-bottom: 30px;
+        }
+        .step {
+            background: rgba(0, 50, 0, 0.5);
+            padding: 20px;
+            margin: 20px 0;
+            border-left: 4px solid #00ff00;
+            border-radius: 5px;
+        }
+        .step h3 {
+            margin-top: 0;
+            color: #00ffff;
+        }
+        button {
+            background: linear-gradient(135deg, #00ff00, #00cc00);
+            color: #000;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 16px;
+            margin: 10px 5px;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(0, 255, 0, 0.3);
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 255, 0, 0.5);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .info-box {
+            background: rgba(0, 100, 255, 0.1);
+            border: 1px solid #00aaff;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .code {
+            background: #000;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        .success {
+            color: #00ff00;
+            font-weight: bold;
+        }
+        .error {
+            color: #ff0000;
+            font-weight: bold;
+        }
+        #output {
+            background: #000;
+            padding: 20px;
+            border-radius: 5px;
+            min-height: 200px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .metric-card {
+            background: rgba(0, 255, 0, 0.05);
+            border: 1px solid #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .metric-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #00ffff;
+        }
+        .metric-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Report Page Test Console</h1>
+        
+        <div class="step">
+            <h3>Step 1: Set User ID</h3>
+            <div class="info-box">
+                <strong>User ID:</strong> <span class="code" style="display: inline;">691e068b0c4975c081cec5eb</span>
+            </div>
+            <button onclick="setUserId()">✅ Set User ID in localStorage</button>
+            <button onclick="checkStorage()">🔍 Check Current Storage</button>
+        </div>
+
+        <div class="step">
+            <h3>Step 2: Test API Call</h3>
+            <button onclick="testAPI()">📡 Test Backend API</button>
+            <button onclick="testDirectFetch()">🚀 Direct Fetch Test</button>
+        </div>
+
+        <div class="step">
+            <h3>Step 3: Open Report Page</h3>
+            <button onclick="openReport()">📊 Open Report Page</button>
+        </div>
+
+        <div class="step">
+            <h3>Output Console:</h3>
+            <div id="output">Click buttons above to start testing...</div>
+        </div>
+
+        <div id="metricsDisplay" style="display: none;">
+            <h3 style="color: #00ffff;">📈 Expected Metrics for This User:</h3>
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Cognitive Performance</div>
+                    <div class="metric-value">61.08</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Final Attention</div>
+                    <div class="metric-value">56.58</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Motor Control</div>
+                    <div class="metric-value">65.52</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Cognitive Load</div>
+                    <div class="metric-value">58.31</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Behavioral Stability</div>
+                    <div class="metric-value">60.26</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">NeuroBalance</div>
+                    <div class="metric-value">68.00</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const USER_ID = '691e068b0c4975c081cec5eb';
+        const API_URL = 'http://localhost:5000/api/auth/adhd-analysis';
+        const output = document.getElementById('output');
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'success' ? '✅' : type === 'error' ? '❌' : '📌';
+            const color = type === 'success' ? '#00ff00' : type === 'error' ? '#ff0000' : '#00aaff';
+            
+            output.innerHTML += `<span style="color: ${color}">[${timestamp}] ${prefix} ${message}</span>\n`;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function setUserId() {
+            try {
+                localStorage.setItem('userId', USER_ID);
+                localStorage.setItem('userEmail', 'guest+1763575435725_5329@guest.local');
+                localStorage.setItem('guestId', 'guest_1763575435673_6374');
+                localStorage.setItem('isLoggedIn', 'guest');
+                
+                log('User ID set successfully!', 'success');
+                log(`userId: ${USER_ID}`, 'info');
+                log('userEmail: guest+1763575435725_5329@guest.local', 'info');
+                log('guestId: guest_1763575435673_6374', 'info');
+                
+                document.getElementById('metricsDisplay').style.display = 'block';
+            } catch (error) {
+                log(`Error setting userId: ${error.message}`, 'error');
+            }
+        }
+
+        function checkStorage() {
+            output.innerHTML = '';
+            log('=== Current localStorage ===', 'info');
+            log(`userId: ${localStorage.getItem('userId') || 'NOT SET'}`, 'info');
+            log(`userEmail: ${localStorage.getItem('userEmail') || 'NOT SET'}`, 'info');
+            log(`guestId: ${localStorage.getItem('guestId') || 'NOT SET'}`, 'info');
+            log(`isLoggedIn: ${localStorage.getItem('isLoggedIn') || 'NOT SET'}`, 'info');
+            log(`token: ${localStorage.getItem('token') ? 'EXISTS' : 'NOT SET'}`, 'info');
+            log('=========================', 'info');
+        }
+
+        async function testAPI() {
+            log('Starting API test...', 'info');
+            
+            try {
+                const url = `${API_URL}?userId=${USER_ID}`;
+                log(`Fetching: ${url}`, 'info');
+                
+                const response = await fetch(url);
+                log(`Response status: ${response.status} ${response.statusText}`, 'info');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log('API call successful!', 'success');
+                    log('Full response:', 'info');
+                    log(JSON.stringify(data, null, 2), 'info');
+                    
+                    if (data.gamesAnalyzed && data.gamesAnalyzed.length > 0) {
+                        const metrics = data.gamesAnalyzed[0].metrics;
+                        log('\n📊 METRICS EXTRACTED:', 'success');
+                        log(`Cognitive Performance: ${metrics.cognitivePerformance}`, 'success');
+                        log(`Final Attention: ${metrics.finalAttention}`, 'success');
+                        log(`Motor Control: ${metrics.motorControl}`, 'success');
+                        log(`Cognitive Load: ${metrics.cognitiveLoad}`, 'success');
+                        log(`Behavioral Stability: ${metrics.behavioralStability}`, 'success');
+                        log(`NeuroBalance: ${metrics.neuroBalance}`, 'success');
+                        
+                        document.getElementById('metricsDisplay').style.display = 'block';
+                    }
+                } else {
+                    const errorData = await response.json();
+                    log(`API error: ${JSON.stringify(errorData)}`, 'error');
+                }
+            } catch (error) {
+                log(`Fetch error: ${error.message}`, 'error');
+                log('Make sure backend is running on port 5000', 'error');
+            }
+        }
+
+        async function testDirectFetch() {
+            log('Testing direct fetch with localStorage userId...', 'info');
+            
+            const userId = localStorage.getItem('userId');
+            if (!userId) {
+                log('No userId in localStorage! Click "Set User ID" first.', 'error');
+                return;
+            }
+            
+            log(`Using userId from localStorage: ${userId}`, 'info');
+            await testAPI();
+        }
+
+        function openReport() {
+            const userId = localStorage.getItem('userId');
+            if (!userId) {
+                log('No userId set! Please set userId first.', 'error');
+                return;
+            }
+            
+            log('Opening Report Page...', 'success');
+            log('Check the main app window for the report!', 'info');
+            
+            // Try to open report page
+            window.open('http://localhost:5173', '_blank');
+        }
+
+        // Auto-check storage on load
+        window.onload = function() {
+            checkStorage();
+            
+            // Show expected metrics
+            setTimeout(() => {
+                log('\n💡 TIP: Click "Set User ID" to configure localStorage', 'info');
+                log('Then click "Test Backend API" to verify data', 'info');
+                log('Finally click "Open Report Page" to see the results!', 'info');
+            }, 500);
+        };
+    </script>
+</body>
+</html>

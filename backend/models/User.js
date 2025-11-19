@@ -3,14 +3,19 @@ const { Schema } = mongoose;
 
 // Single game entry schema (stored inside session.games[])
 const GameSchema = new Schema({
-  type: { type: String, enum: ['maze', 'adhd'], required: true },
+  type: { type: String, enum: ['maze', 'adhd', 'mario'], required: true },
   day: { type: Number, default: 1 },
   startTime: { type: Date, default: null },
   start: { type: Boolean, default: false },
   logs: { type: [Schema.Types.Mixed], default: [] },
   endTime: { type: Date, default: null },
-  end: { type: Boolean, default: false }
-}, { _id: false, strict: true });
+  end: { type: Boolean, default: false },
+  // ADHD Analysis Metrics (auto-populated after 3 games complete)
+  analysisMetrics: {
+    type: Schema.Types.Mixed,
+    default: null
+  }
+}, { _id: false, strict: false }); // Changed to strict: false to allow dynamic fields
 
 // Session schema: games is an array of GameSchema
 const SessionSchema = new Schema({
@@ -29,7 +34,7 @@ const SessionSchema = new Schema({
 const userSchema = new Schema({
   guestId: { type: String, index: true, sparse: true },
   email: { type: String, lowercase: true, trim: true, index: true, sparse: true },
-  game: { type: String, enum: ['start', 'end', null], default: null },
+  game: { type: String, enum: ['start', 'end'], default: null },
   passwordHash: { type: String },
   createdAt: { type: Date, default: () => new Date() },
   sessions: { type: [SessionSchema], default: [] }

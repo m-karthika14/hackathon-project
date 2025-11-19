@@ -7,6 +7,7 @@ const MOVE_SPEED = 5;
 const STAR_COUNT = 150;
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 400;
+const LEVEL_TIME_LIMIT = 30000; // 30 seconds per level
 
 // Centralized Level Configuration
 const INITIAL_LEVEL_CONFIG = {
@@ -80,7 +81,11 @@ const INITIAL_LEVEL_CONFIG = {
   }
 };
 
-const VoidJumper = () => {
+interface MarioGameProps {
+  onGameComplete?: () => void;
+}
+
+const VoidJumper: React.FC<MarioGameProps> = ({ onGameComplete }) => {
   const canvasRef = useRef(null);
   const [gameState, setGameState] = useState('intro');
   const [countdown, setCountdown] = useState(3);
@@ -91,6 +96,7 @@ const VoidJumper = () => {
   const [reportHTML, setReportHTML] = useState('');
   const [floatingFeedback, setFloatingFeedback] = useState(null);
   const [dynamicLevelConfig, setDynamicLevelConfig] = useState(INITIAL_LEVEL_CONFIG[1]);
+  const [levelTimeRemaining, setLevelTimeRemaining] = useState(30);
 
   const gameRunning = useRef(false);
   const playerRef = useRef({
@@ -111,6 +117,7 @@ const VoidJumper = () => {
   const movingPlatformRef = useRef({ direction: 1, speed: 2 });
   const goalFlipTimerRef = useRef(0);
   const platformTouchedRef = useRef(false);
+  const levelTimerRef = useRef(0);
 
   const playSound = (type) => {
     try {
@@ -198,9 +205,8 @@ const VoidJumper = () => {
   };
 
   const resetLevel = (reason) => {
+    // DON'T stop the game, DON'T reset timer, just respawn player
     playSound('trick');
-    cancelAnimationFrame(animationFrameRef.current);
-    gameRunning.current = false;
 
     const newLevelResets = levelResets + 1;
     const newTotalResets = totalResets + 1;
@@ -215,20 +221,9 @@ const VoidJumper = () => {
 
     showFloatingFeedbackMsg('RESET: ' + reason, '#ff0000');
 
-    setTimeout(() => {
-      setMessageData({
-        title: "RESET!",
-        body: 'Mistake: ' + reason + '. Retry Level ' + currentLevel + '. Remember: ' + INITIAL_LEVEL_CONFIG[currentLevel].hint,
-        buttonText: "RETRY LEVEL",
-        callback: () => {
-          setMessageData(null);
-          resetPlayerPosition();
-          gameRunning.current = true;
-          startTimeRef.current = performance.now();
-          requestAnimationFrame(gameLoop);
-        }
-      });
-    }, 50);
+    // Immediately respawn without stopping the game or timer
+    resetPlayerPosition();
+    // Game continues running, timer keeps counting
   };
 
   const handleLevelWin = () => {
@@ -237,19 +232,23 @@ const VoidJumper = () => {
     gameRunning.current = false;
 
     const timeTaken = performance.now() - startTimeRef.current;
+    const timeRemaining = LEVEL_TIME_LIMIT - timeTaken;
+    
     performanceDataRef.current.push({
       level: currentLevel,
       time_ms: timeTaken,
-      resets: levelResets
+      resets: levelResets,
+      completed: true,
+      timeRemaining: Math.max(0, timeRemaining)
     });
 
-    logEvent('Level_Complete', { time_ms: timeTaken, resets: levelResets });
+    logEvent('Level_Complete', { time_ms: timeTaken, resets: levelResets, completed: true });
 
     if (currentLevel < 5) {
       const nextLevel = currentLevel + 1;
       setMessageData({
         title: 'LEVEL ' + currentLevel + ' COMPLETE!',
-        body: 'Resets: ' + levelResets + ' | Time: ' + (timeTaken/1000).toFixed(1) + 's. Next: ' + INITIAL_LEVEL_CONFIG[nextLevel].hint,
+        body: 'Completed! Resets: ' + levelResets + ' | Time: ' + (timeTaken/1000).toFixed(1) + 's. Next: ' + INITIAL_LEVEL_CONFIG[nextLevel].hint,
         buttonText: "NEXT LEVEL",
         callback: () => {
           setMessageData(null);
@@ -264,20 +263,80 @@ const VoidJumper = () => {
     }
   };
 
-  const handleGameOver = () => {
+  const handleLevelTimeout = () => {
+    playSound('hit');
+    cancelAnimationFrame(animationFrameRef.current);
+    gameRunning.current = false;
+
+    const timeTaken = performance.now() - startTimeRef.current;
+    
+    performanceDataRef.current.push({
+      level: currentLevel,
+      time_ms: timeTaken,
+      resets: levelResets,
+      completed: false,
+      timeRemaining: 0
+    });
+
+    logEvent('Level_Timeout', { time_ms: timeTaken, resets: levelResets, completed: false });
+
+    if (currentLevel < 5) {
+      const nextLevel = currentLevel + 1;
+      setMessageData({
+        title: 'TIME UP!',
+        body: 'Level ' + currentLevel + ' timeout. Moving to next level. Resets: ' + levelResets,
+        buttonText: "NEXT LEVEL",
+        callback: () => {
+          setMessageData(null);
+          setCurrentLevel(nextLevel);
+          setLevelResets(0);
+          setGameState('countdown');
+          setCountdown(3);
+        }
+      });
+    } else {
+      handleGameOver();
+    }
+  };
+
+  const handleGameOver = async () => {
     playSound('gameover');
     logEvent('Game_Over', { totalResets: totalResets });
     gameRunning.current = false;
 
-    const report = generateCognitiveReport();
+    // Send end signal to backend to mark session complete
+    try {
+      const userId = localStorage.getItem('userId');
+      const guestId = localStorage.getItem('guestId');
+      const sessionId = localStorage.getItem('gameSessionId');
+      
+      await fetch('http://localhost:5000/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          end: true,
+          gameKey: 'mario',
+          sessionId,
+          userId: userId || undefined,
+          guestId: guestId || undefined
+        })
+      });
+      console.log('✅ Mario game session ended in backend');
+    } catch (error) {
+      console.error('❌ Error ending Mario session:', error);
+    }
+
+    // Show completion message briefly, then navigate
     setMessageData({
-      title: "TEST COMPLETE",
-      body: 'Total Resets: ' + totalResets + ' | Time: ' + report.totalTimeSeconds.toFixed(1) + 's. Your cognitive assessment report is ready.',
+      title: "ALL GAMES COMPLETE!",
+      body: 'Total Resets: ' + totalResets + '. Generating your cognitive assessment report...',
       buttonText: "VIEW REPORT",
       callback: () => {
-        setReportHTML(report.html);
         setMessageData(null);
-        setGameState('report');
+        // Call onGameComplete to trigger navigation to report
+        if (onGameComplete) {
+          onGameComplete();
+        }
       }
     });
   };
@@ -286,6 +345,11 @@ const VoidJumper = () => {
     const totalTimeMs = performanceDataRef.current.reduce((sum, data) => sum + data.time_ms, 0);
     const totalTimeSeconds = totalTimeMs / 1000;
     const avgResetsPerLevel = totalResets / 5;
+    
+    // Calculate completion stats
+    const completedLevels = performanceDataRef.current.filter(d => d.completed).length;
+    const timedOutLevels = performanceDataRef.current.filter(d => !d.completed).length;
+    const completionRate = (completedLevels / 5) * 100;
 
     const mistakeTypes = moveLogRef.current.filter(e => e.event === 'Level_Reset').map(e => e.detail.reason);
     const trickResets = mistakeTypes.filter(r => r.includes('Pit') || r.includes('Trap') || r.includes('Fake')).length;
@@ -293,11 +357,14 @@ const VoidJumper = () => {
     const hazardResets = mistakeTypes.filter(r => r.includes('Spike') || r.includes('Hazard') || r.includes('Moving')).length;
     const disappearingResets = mistakeTypes.filter(r => r.includes('Disappearing') || r.includes('Vanish')).length;
 
-    const attentionScore = Math.max(0, 100 - (trickResets * 15));
-    const motorControlScore = Math.max(0, 100 - (motorResets * 12));
-    const cognitiveLoadScore = Math.max(0, 100 - (disappearingResets * 10) - (avgResetsPerLevel * 5));
-    const environmentalStressScore = Math.max(0, 100 - (hazardResets * 15));
-    const behavioralStabilityScore = Math.max(0, 100 - (totalResets * 3));
+    // Penalize for timed-out levels
+    const timeoutPenalty = timedOutLevels * 10;
+    
+    const attentionScore = Math.max(0, 100 - (trickResets * 15) - timeoutPenalty);
+    const motorControlScore = Math.max(0, 100 - (motorResets * 12) - (timeoutPenalty * 0.5));
+    const cognitiveLoadScore = Math.max(0, 100 - (disappearingResets * 10) - (avgResetsPerLevel * 5) - timeoutPenalty);
+    const environmentalStressScore = Math.max(0, 100 - (hazardResets * 15) - (timeoutPenalty * 0.5));
+    const behavioralStabilityScore = Math.max(0, 100 - (totalResets * 3) - timeoutPenalty);
     const neuroBalanceScore = (attentionScore + motorControlScore + cognitiveLoadScore + environmentalStressScore + behavioralStabilityScore) / 5;
 
     let riskLevel = "LOW RISK";
@@ -337,7 +404,7 @@ const VoidJumper = () => {
         <div style="background: rgba(255, 64, 129, 0.1); border: 2px solid ${riskColor}; padding: 20px; margin-bottom: 20px; border-radius: 10px; box-shadow: 0 0 20px ${riskColor};">
           <h3 style="color: ${riskColor}; font-size: 1.2rem; margin-bottom: 10px;">RISK ASSESSMENT: ${riskLevel}</h3>
           <p style="font-size: 0.7rem; line-height: 1.8; color: #ffffff;">NeuroBalance Score: ${neuroBalanceScore.toFixed(1)}/100</p>
-          <p style="font-size: 0.6rem; line-height: 1.8; color: #cccccc;">Total Resets: ${totalResets} | Time: ${totalTimeSeconds.toFixed(1)}s</p>
+          <p style="font-size: 0.6rem; line-height: 1.8; color: #cccccc;">Total Resets: ${totalResets} | Time: ${totalTimeSeconds.toFixed(1)}s | Completed: ${completedLevels}/5</p>
           <p style="font-size: 0.6rem; line-height: 1.8; margin-top: 15px; color: #ffffff;">${riskDescription}</p>
           <p style="font-size: 0.6rem; line-height: 1.8; margin-top: 10px; color: #ffaa00; background: rgba(255, 170, 0, 0.1); padding: 10px; border-radius: 5px;">${recommendation}</p>
         </div>
@@ -417,12 +484,15 @@ const VoidJumper = () => {
         </div>
 
         <div style="background: rgba(0, 234, 255, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-          <h4 style="font-size: 0.8rem; margin-bottom: 10px; color: #00eaff;">Level Performance</h4>
+          <h4 style="font-size: 0.8rem; margin-bottom: 10px; color: #00eaff;">Level Performance (30s each)</h4>
           ${performanceDataRef.current.map(perf => `
-            <div style="font-size: 0.6rem; color: #cccccc; margin-bottom: 5px; padding: 5px; background: rgba(255, 255, 255, 0.05); border-radius: 4px;">
-              Level ${perf.level}: ${(perf.time_ms/1000).toFixed(1)}s | ${perf.resets} resets
+            <div style="font-size: 0.6rem; color: #cccccc; margin-bottom: 5px; padding: 5px; background: rgba(255, 255, 255, 0.05); border-radius: 4px; border-left: 3px solid ${perf.completed ? '#00ff00' : '#ff0000'};">
+              Level ${perf.level}: ${(perf.time_ms/1000).toFixed(1)}s | ${perf.resets} resets | ${perf.completed ? '✓ COMPLETED' : '✗ TIME OUT'}
             </div>
           `).join('')}
+          <div style="font-size: 0.6rem; color: #00eaff; margin-top: 10px; padding: 5px;">
+            Completion Rate: ${completionRate.toFixed(0)}% (${completedLevels}/5 completed)
+          </div>
         </div>
 
         <div style="background: rgba(255, 255, 0, 0.1); padding: 15px; border-radius: 8px; border: 1px solid #ffaa00;">
@@ -439,6 +509,11 @@ const VoidJumper = () => {
         assessmentDate: new Date().toISOString(),
         totalResets: totalResets,
         totalTimeSeconds: totalTimeSeconds,
+        completionStats: {
+          completedLevels: completedLevels,
+          timedOutLevels: timedOutLevels,
+          completionRate: completionRate
+        },
         scores: {
           attention: attentionScore,
           motorControl: motorControlScore,
@@ -455,7 +530,8 @@ const VoidJumper = () => {
           motorResets: motorResets,
           hazardResets: hazardResets,
           disappearingResets: disappearingResets,
-          avgResetsPerLevel: avgResetsPerLevel
+          avgResetsPerLevel: avgResetsPerLevel,
+          timeoutPenalty: timeoutPenalty
         },
         performanceSummary: performanceDataRef.current,
         detailedEventLog: moveLogRef.current
@@ -830,6 +906,18 @@ const VoidJumper = () => {
 
   const gameLoop = () => {
     if (!gameRunning.current) return;
+    
+    // Check timer
+    const elapsed = performance.now() - startTimeRef.current;
+    const timeLeft = Math.max(0, LEVEL_TIME_LIMIT - elapsed);
+    setLevelTimeRemaining(Math.ceil(timeLeft / 1000));
+    
+    // Auto-advance on timeout
+    if (elapsed >= LEVEL_TIME_LIMIT) {
+      handleLevelTimeout();
+      return;
+    }
+    
     handleInput();
     updatePhysics();
     draw();
@@ -943,6 +1031,7 @@ const VoidJumper = () => {
             <ul style={{ fontSize: '0.6rem', lineHeight: '1.8', color: '#ffffff', listStyle: 'none', padding: 0 }}>
               <li>✓ Navigate through 5 challenging levels</li>
               <li>✓ Each level tests different cognitive abilities</li>
+              <li>✓ ⏱️ 30 SECONDS per level - complete fast or auto-advance!</li>
               <li>✓ Beware of invisible traps, fake goals, and disappearing platforms</li>
               <li>✓ Complete all levels to receive your assessment</li>
             </ul>
@@ -1041,12 +1130,13 @@ const VoidJumper = () => {
             top: '20px',
             left: '50%',
             transform: 'translateX(-50%)',
-            color: '#00eaff',
+            color: levelTimeRemaining <= 10 ? '#ff0000' : '#00eaff',
             fontSize: '0.8rem',
-            textShadow: '0 0 10px #00eaff',
-            textAlign: 'center'
+            textShadow: levelTimeRemaining <= 10 ? '0 0 20px #ff0000' : '0 0 10px #00eaff',
+            textAlign: 'center',
+            animation: levelTimeRemaining <= 5 ? 'pulse 0.5s infinite' : 'none'
           }}>
-            LEVEL: {currentLevel} / 5 | RESETS: {levelResets}
+            LEVEL: {currentLevel} / 5 | RESETS: {levelResets} | TIME: {levelTimeRemaining}s
           </div>
 
           <canvas

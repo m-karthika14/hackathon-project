@@ -1,7 +1,9 @@
 const User = require('../models/User.js');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const SALT_ROUNDS = 10;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 const login = async (req, res) => {
   const { email, password } = req.body;
@@ -20,10 +22,18 @@ const login = async (req, res) => {
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) return res.status(401).json({ message: 'Invalid credentials' });
 
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id.toString(), email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     res.status(200).json({
       message: 'Login successful',
       userId: user._id.toString(),
-      email: user.email
+      email: user.email,
+      token: token
     });
   } catch (error) {
     res.status(500).json({ message: 'Error during login', error });
@@ -43,10 +53,18 @@ const register = async (req, res) => {
     const newUser = new User({ email, passwordHash: hash, createdAt: new Date() });
     await newUser.save();
 
+    // Generate JWT token for new user
+    const token = jwt.sign(
+      { userId: newUser._id.toString(), email: newUser.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     res.status(201).json({
       message: 'User created successfully',
       userId: newUser._id.toString(),
-      email: newUser.email
+      email: newUser.email,
+      token: token
     });
   } catch (error) {
     res.status(500).json({ message: 'Error creating user', error });
@@ -82,14 +100,39 @@ const guest = async (req, res) => {
 
     if (existing) {
       console.log('[auth][guest] Found existing guest user, returning it:', guestId, existing._id.toString());
-      return res.status(200).json({ message: 'Guest ready', guestId: existing.guestId, userId: existing._id.toString() });
+      
+      // Generate JWT token for existing guest
+      const token = jwt.sign(
+        { userId: existing._id.toString(), guestId: existing.guestId },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      
+      return res.status(200).json({ 
+        message: 'Guest ready', 
+        guestId: existing.guestId, 
+        userId: existing._id.toString(),
+        token: token
+      });
     }
 
     const user = new User({ guestId, email: syntheticEmail, createdAt: new Date() });
     await user.save();
     console.log('[auth][guest] Created NEW guest user:', guestId, user._id.toString());
 
-    return res.status(201).json({ message: 'Guest created', guestId: user.guestId, userId: user._id.toString() });
+    // Generate JWT token for new guest
+    const token = jwt.sign(
+      { userId: user._id.toString(), guestId: user.guestId },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.status(201).json({ 
+      message: 'Guest created', 
+      guestId: user.guestId, 
+      userId: user._id.toString(),
+      token: token
+    });
   } catch (error) {
     console.error('Error in guest auth:', error);
     return res.status(500).json({ message: 'Error creating guest', error: error.message });

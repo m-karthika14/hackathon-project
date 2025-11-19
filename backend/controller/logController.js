@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const { analyzeADHDGame } = require('../services/adhdAnalysisService');
 
 // Save raw game logs under the user's document. Supports guestId or userId.
 exports.saveGameLogs = async (req, res) => {
@@ -189,13 +190,42 @@ exports.saveGameLogs = async (req, res) => {
             sess.games = sess.games || [];
             const lastGame = sess.games.slice().reverse().find(g => g.type === gameKey && g.day === (req.body.dayNumber || 1));
             if (lastGame) { lastGame.end = true; lastGame.endTime = lastGame.endTime || new Date(); }
-            // If ADHD final click (or forceEnd), mark session end as well AND set user.game = "end"
-            if (gameKey === 'adhd' || req.body.forceEnd === true || req.body.forceEnd === 'true') {
+            // If Mario final click (or forceEnd), mark session end as well AND set user.game = "end"
+            if (gameKey === 'mario' || req.body.forceEnd === true || req.body.forceEnd === 'true') {
               sess.isEnd = true; 
               sess.endTimeUTC = sess.endTimeUTC || new Date(); 
               sess.endTimeIST = sess.endTimeIST || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-              // Set user.game = "end" when ADHD final click happens
+              // Set user.game = "end" when Mario final click happens
               doc.game = 'end';
+              
+              // === AUTO-ANALYZE ADHD GAME ===
+              console.log('[saveGameLogs] 🎯 All 3 games completed! Starting ADHD analysis (end-only path)...');
+              try {
+                // Find the ADHD game in this session
+                const sessionIndex = doc.sessions.findIndex(s => s.sessionNumber === currentSession.sessionNumber);
+                const adhdGameIndex = sess.games.findIndex(g => g.type && g.type.toLowerCase() === 'adhd');
+                
+                if (sessionIndex >= 0 && adhdGameIndex >= 0) {
+                  console.log(`[saveGameLogs] Found ADHD game at session ${sessionIndex}, game ${adhdGameIndex}`);
+                  
+                  // Analyze the ADHD game
+                  const analysisMetrics = await analyzeADHDGame(doc, sessionIndex, adhdGameIndex);
+                  
+                  if (analysisMetrics) {
+                    // Save the analysis metrics to the game
+                    sess.games[adhdGameIndex].analysisMetrics = analysisMetrics;
+                    doc.markModified(`sessions.${sessionIndex}.games`);
+                    console.log('[saveGameLogs] ✅ ADHD analysis metrics saved successfully!');
+                  } else {
+                    console.log('[saveGameLogs] ⚠️ ADHD analysis returned no metrics');
+                  }
+                } else {
+                  console.log(`[saveGameLogs] ⚠️ ADHD game not found in session (sessionIdx=${sessionIndex}, gameIdx=${adhdGameIndex})`);
+                }
+              } catch (analysisError) {
+                console.error('[saveGameLogs] ❌ Error during ADHD analysis:', analysisError.message);
+                // Don't fail the entire request if analysis fails
+              }
             }
             if (typeof doc.markModified === 'function') doc.markModified('sessions');
             await doc.save();
@@ -320,14 +350,43 @@ exports.saveGameLogs = async (req, res) => {
             lastGame.endTime = lastGame.endTime || new Date();
             console.log('[saveGameLogs] Marked game as ended');
           }
-          // If ADHD final click (or forceEnd), mark session end as well AND set user.game = "end"
-          if (gameKey === 'adhd' || req.body.forceEnd === true || req.body.forceEnd === 'true') {
+          // If Mario final click (or forceEnd), mark session end as well AND set user.game = "end"
+          if (gameKey === 'mario' || req.body.forceEnd === true || req.body.forceEnd === 'true') {
             sess.isEnd = true; 
             sess.endTimeUTC = sess.endTimeUTC || new Date(); 
             sess.endTimeIST = sess.endTimeIST || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-            // Set user.game = "end" when ADHD final click happens
+            // Set user.game = "end" when Mario final click happens
             doc.game = 'end';
             console.log('[saveGameLogs] Marked session as ended and set user.game = "end"');
+            
+            // === AUTO-ANALYZE ADHD GAME ===
+            console.log('[saveGameLogs] 🎯 All 3 games completed! Starting ADHD analysis...');
+            try {
+              // Find the ADHD game in this session
+              const sessionIndex = doc.sessions.findIndex(s => s.sessionNumber === currentSession.sessionNumber);
+              const adhdGameIndex = sess.games.findIndex(g => g.type && g.type.toLowerCase() === 'adhd');
+              
+              if (sessionIndex >= 0 && adhdGameIndex >= 0) {
+                console.log('[saveGameLogs] Found ADHD game at session ${sessionIndex}, game ${adhdGameIndex}');
+                
+                // Analyze the ADHD game
+                const analysisMetrics = await analyzeADHDGame(doc, sessionIndex, adhdGameIndex);
+                
+                if (analysisMetrics) {
+                  // Save the analysis metrics to the game
+                  sess.games[adhdGameIndex].analysisMetrics = analysisMetrics;
+                  doc.markModified(`sessions.${sessionIndex}.games`);
+                  console.log('[saveGameLogs] ✅ ADHD analysis metrics saved successfully!');
+                } else {
+                  console.log('[saveGameLogs] ⚠️ ADHD analysis returned no metrics');
+                }
+              } else {
+                console.log('[saveGameLogs] ⚠️ ADHD game not found in session (sessionIdx=${sessionIndex}, gameIdx=${adhdGameIndex})');
+              }
+            } catch (analysisError) {
+              console.error('[saveGameLogs] ❌ Error during ADHD analysis:', analysisError.message);
+              // Don't fail the entire request if analysis fails
+            }
           }
         }
 

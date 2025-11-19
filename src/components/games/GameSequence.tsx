@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import NeuroBalanceMaze from './NeuroBalanceMaze';
 import ADHDGame from './adhdgame';
+import MarioGame from './mario';
 
 interface GameSequenceProps {
   // Add any props needed for the overall flow
 }
 
 const GameSequence: React.FC<GameSequenceProps> = () => {
-  const [currentGame, setCurrentGame] = useState<'maze' | 'adhd'>('maze');
+  const [currentGame, setCurrentGame] = useState<'maze' | 'adhd' | 'mario'>('maze');
   const navigate = useNavigate();
   
   // Ensure a stable session id exists for the whole sequence (links maze -> adhd)
@@ -31,7 +32,14 @@ const GameSequence: React.FC<GameSequenceProps> = () => {
   };
 
   const handleADHDComplete = () => {
-    console.log('🎮 GameSequence: ADHD game completed, navigating to report...');
+    console.log('🎮 GameSequence: ADHD game completed, transitioning to Mario game...');
+    console.log('🔄 GameSequence: Current game state before transition:', currentGame);
+    setCurrentGame('mario');
+    console.log('✅ GameSequence: State changed to mario');
+  };
+  
+  const handleMarioComplete = () => {
+    console.log('🎮 GameSequence: Mario game completed, navigating to report...');
     console.log('🔄 GameSequence: Current game state before transition:', currentGame);
     navigate('/report');
     console.log('✅ GameSequence: Navigated to report');
@@ -46,7 +54,8 @@ const GameSequence: React.FC<GameSequenceProps> = () => {
   useEffect(() => {
     console.log('🔍 GameSequence: handleMazeComplete function is:', handleMazeComplete);
     console.log('🔍 GameSequence: handleADHDComplete function is:', handleADHDComplete);
-  }, [handleMazeComplete, handleADHDComplete]);
+    console.log('🔍 GameSequence: handleMarioComplete function is:', handleMarioComplete);
+  }, [handleMazeComplete, handleADHDComplete, handleMarioComplete]);
 
   return (
     <div className="game-sequence-container">
@@ -55,6 +64,9 @@ const GameSequence: React.FC<GameSequenceProps> = () => {
       )}
       {currentGame === 'adhd' && (
         <ADHDGame onGameComplete={handleADHDComplete} />
+      )}
+      {currentGame === 'mario' && (
+        <MarioGame onGameComplete={handleMarioComplete} />
       )}
     </div>
   );

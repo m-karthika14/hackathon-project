@@ -29,16 +29,63 @@ const LoginPage: React.FC = () => {
         localStorage.setItem('userId', data.userId);
         localStorage.setItem('userEmail', data.email);
         localStorage.setItem('isLoggedIn', 'true');
-        
+        // Generate a fresh sessionId for this signed-in session so subsequent game logs
+        // are grouped under the same user but associated with a unique session.
+        const sessionId = `session_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+        localStorage.setItem('gameSessionId', sessionId);
+        // Clear any guestId left from prior guest play to avoid mixing identities
+        localStorage.removeItem('guestId');
+
+        console.log('Stored sessionId for user:', sessionId);
+
         navigate('/home');
       } else {
         const errorData = await response.json();
         console.error('Failed to login:', errorData);
-        alert('Login failed: ' + errorData.message);
+        // If user not found, offer to register
+        if (errorData && errorData.message === 'User not found') {
+          if (window.confirm('User not found. Would you like to create a new account with this email and password?')) {
+            await handleRegister(email, password);
+            return;
+          }
+        }
+        alert('Login failed: ' + (errorData.message || JSON.stringify(errorData)));
       }
     } catch (error) {
       console.error('Error during login:', error);
       alert('An error occurred during login. Please try again.');
+    }
+  };
+
+  // Register a new user with email/password
+  const handleRegister = async (regEmail?: string, regPassword?: string) => {
+    try {
+      const payload = { email: regEmail ?? email, password: regPassword ?? password };
+      const resp = await fetch('http://localhost:5000/api/auth/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        console.error('Register failed:', data);
+        alert('Register failed: ' + (data.message || JSON.stringify(data)));
+        return;
+      }
+
+      console.log('Register successful:', data);
+      // Save user data and create session id
+      if (data.userId) localStorage.setItem('userId', data.userId);
+      if (data.email) localStorage.setItem('userEmail', data.email);
+      localStorage.setItem('isLoggedIn', 'true');
+      const sessionId = `session_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+      localStorage.setItem('gameSessionId', sessionId);
+      // Clear any guestId
+      localStorage.removeItem('guestId');
+
+      alert('Account created and logged in.');
+      navigate('/home');
+    } catch (err) {
+      console.error('Error registering user:', err);
+      alert('An error occurred during registration. See console.');
     }
   };
 
@@ -67,6 +114,10 @@ const LoginPage: React.FC = () => {
         if (data.userId) localStorage.setItem('userId', data.userId);
         localStorage.setItem('userEmail', 'guest@mindmirror.ai');
         localStorage.setItem('isLoggedIn', 'guest');
+
+  // Create a session id for this guest session as well
+  const sessionId = `session_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+  localStorage.setItem('gameSessionId', sessionId);
 
         alert(`Logged in as guest (${data.guestId || newGuestId}). Account saved to database.`);
         navigate('/home');

@@ -3,19 +3,18 @@ const User = require('../models/User');
 // Save raw game logs under the user's document. Supports guestId or userId.
 exports.saveGameLogs = async (req, res) => {
   try {
-    // Quick debug log to inspect incoming requests when diagnosing 4xx/5xx
-    console.log('[POST /api/logs] incoming body:', JSON.stringify(req.body).slice(0, 2000));
-    const { gameKey, logs, guestId, userId, sessionId, checkOnly } = req.body;
+    console.log('[POST /api/logs] incoming body:', JSON.stringify(req.body).slice(0, 3000));
+    const { gameKey, logs, guestId, userId, sessionId, checkOnly, start, end } = req.body;
 
-    // If client is only checking availability, allow play (no limits enforced)
+    // Quick availability check
     if (checkOnly) {
       if (!userId && !guestId) return res.status(400).json({ ok: false, message: 'checkOnly requires userId or guestId' });
       return res.status(200).json({ ok: true, message: 'Allowed' });
     }
 
-    // For actual saves, require gameKey and logs
-    if (!gameKey || !logs) {
-      return res.status(400).json({ message: 'gameKey and logs are required' });
+    // For actual saves (not a Start Assessment request), require gameKey and logs
+    if (!start && !gameKey && !checkOnly) {
+      return res.status(400).json({ message: 'gameKey is required for non-start requests' });
     }
 
     let query = {};
@@ -24,126 +23,103 @@ exports.saveGameLogs = async (req, res) => {
     else return res.status(400).json({ message: 'Either userId or guestId must be provided' });
 
     let user = await User.findOne(query);
-
     if (!user) {
-      // Create a guest document if not found
-      user = new User({
-        guestId: guestId || undefined,
-        createdAt: new Date(),
-        games: {}
-      });
+      // Create guest user with empty sessions
+      user = new User({ guestId: guestId || undefined, createdAt: new Date(), sessions: [] });
+      await user.save();
     }
 
-    if (!user.games) user.games = {};
-
-  // Play-limit enforcement
-    // Helper: scan all existing sessions for this user
-    const allSessions = [];
-    Object.keys(user.games || {}).forEach(k => {
-      const g = user.games[k];
-      if (g && Array.isArray(g.logs)) {
-        g.logs.forEach(s => allSessions.push({ ...s, gameKey: k }));
-      }
-    });
-
-    // If sessionId provided and we've already stored this session, allow idempotent save
-    const hasSameSession = sessionId && allSessions.some(s => s.sessionId === sessionId);
-
-    // Play limits disabled by request: guests and users may play unlimited times.
-
-    // Flexible handling: maze sometimes sends a single run object (with nested arrays like errorLog),
-    // sometimes an array of per-trial objects. Normalize both into an array of entries to persist.
+    // Normalize incoming logs similar to previous behavior
     let filteredLogs = [];
     try {
       if (gameKey === 'maze') {
-        if (Array.isArray(logs)) {
-          // keep only level-1 trial logs when frontend provides per-trial entries
-          filteredLogs = logs.filter(l => l && l.level === 1);
-        } else if (logs && typeof logs === 'object') {
-          // single-run object (e.g. contains path, errorLog, completionTime) — save as one entry
-          filteredLogs = [logs];
-        } else {
-          filteredLogs = [];
-        }
-      } else if (gameKey === 'adhd') {
-        filteredLogs = Array.isArray(logs) ? logs.filter(l => l && l.level === 1) : [];
-      } else {
-        // Generic fallback: accept array payloads or wrap single objects
-        if (Array.isArray(logs)) filteredLogs = logs;
+        if (Array.isArray(logs)) filteredLogs = logs.filter(l => l && (l.level === 1 || typeof l.level === 'undefined'));
         else if (logs && typeof logs === 'object') filteredLogs = [logs];
-        else filteredLogs = [];
+      } else if (gameKey === 'adhd') {
+        filteredLogs = Array.isArray(logs) ? logs.filter(l => l && (l.level === 1 || typeof l.level === 'undefined')) : [];
+      } else {
+        if (Array.isArray(logs)) filteredLogs = logs; else if (logs && typeof logs === 'object') filteredLogs = [logs];
       }
-    } catch (e) {
-      filteredLogs = [];
-    }
+    } catch (e) { filteredLogs = []; }
 
-    // Ensure gameKey subfield exists and is an array of log entries
-    const existing = user.games[gameKey] || { logs: [] };
-
-    // Helper to enrich an entry. For maze run-objects, also add IST/UTC to nested errorLog items when present.
     const enrichEntry = (entry) => {
       const now = new Date();
-      const createdAtUTC = now.toISOString();
-      const createdAtIST = now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-
-      const base = {
-        ...(entry || {}),
-        sessionId: sessionId || null,
-        createdAtUTC,
-        createdAtIST
-      };
-
-      // If this is a maze-run object with nested errorLog array, enrich nested items too
+      const base = { ...(entry || {}), sessionId: sessionId || null, createdAtUTC: now.toISOString(), createdAtIST: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) };
+      // enrich nested errorLog if present
       try {
         if (base.errorLog && Array.isArray(base.errorLog)) {
-          base.errorLog = base.errorLog.map(ev => {
-            // use existing time if present to compute IST for the nested event
-            const evTime = ev && ev.time ? new Date(ev.time) : new Date();
-            return {
-              ...(ev || {}),
-              createdAtUTC: evTime.toISOString(),
-              createdAtIST: evTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
-            };
-          });
+          base.errorLog = base.errorLog.map(ev => { const t = ev && ev.time ? new Date(ev.time) : new Date(); return { ...(ev || {}), createdAtUTC: t.toISOString(), createdAtIST: t.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) }; });
         }
-      } catch (nestedErr) {
-        // ignore nested enrichment errors — we still save the base entry
-      }
-
+      } catch (e) { }
       return base;
     };
 
-    // Enrich each incoming log with sessionId and createdAt so we can later query/deduplicate
     const enriched = Array.isArray(filteredLogs) ? filteredLogs.map(enrichEntry) : [];
+    console.log(`[saveGameLogs] prepared ${enriched.length} enriched entries for user ${user._id} gameKey=${gameKey}`);
 
-    console.log(`[saveGameLogs] appending ${enriched.length} entries to user ${user._id} for gameKey=${gameKey}`);
-    if (enriched.length > 0) console.log('[saveGameLogs] sample entry:', JSON.stringify(enriched[0]).slice(0, 1000));
+    // If client indicated Start Assessment (home page), create a new session and mark start
+    let currentSession = null;
+    if (start === true) {
+      const created = await User.createNewSession(user._id, { sessionId: sessionId || null, isStart: true });
+      currentSession = created.session;
+      user = created.user;
+    }
 
-  // Append enriched entries to existing logs array (preserve history)
-  existing.logs = Array.isArray(existing.logs) ? [...existing.logs, ...enriched] : [...enriched];
-  user.games[gameKey] = existing;
-  // Because `games` is a Mixed type, Mongoose may not detect nested changes automatically.
-  // Mark the path as modified so Mongoose will persist our updates.
-  if (typeof user.markModified === 'function') user.markModified('games');
+    // If sessionId provided try to locate it, otherwise use active session or create new one
+    if (!currentSession) {
+      const findRes = await User.findOrCreateSession(user._id, { sessionId: sessionId || null, createIfMissing: true });
+      user = findRes.user;
+      currentSession = findRes.session;
+    }
 
+    // Append logs into the appropriate game object inside the session
     try {
-      await user.save();
-      // Read back the saved document to verify persistence and help debugging
-      try {
-        const fresh = await User.findById(user._id).lean();
-        console.log('[saveGameLogs] post-save games keys:', Object.keys(fresh.games || {}));
-        const savedLogs = fresh.games && fresh.games[gameKey] && Array.isArray(fresh.games[gameKey].logs) ? fresh.games[gameKey].logs : [];
-        console.log(`[saveGameLogs] saved ${savedLogs.length} total entries for gameKey=${gameKey} (user ${user._id})`);
-        if (savedLogs.length > 0) console.log('[saveGameLogs] last entry sample:', JSON.stringify(savedLogs[savedLogs.length - 1]).slice(0, 1000));
-      } catch (readErr) {
-        console.error('Error reading back saved user for verification:', readErr);
+      const dayNumber = (req.body.dayNumber || 1);
+      for (const entry of enriched) {
+        // Use model helper to append into a game entry
+        if (gameKey === 'maze') {
+          await User.appendMazeLog(user._id, dayNumber, currentSession.sessionNumber, entry);
+        } else if (gameKey === 'adhd') {
+          await User.appendAdhdLog(user._id, dayNumber, currentSession.sessionNumber, entry);
+        } else {
+          // generic: just push into a fallback game object
+          const g = { type: gameKey, day: dayNumber, startTime: new Date(), start: true, logs: [entry], endTime: null, end: false };
+          const doc = await User.findById(user._id);
+          doc.sessions = doc.sessions || [];
+          const sess = doc.sessions.find(s => s.sessionNumber === currentSession.sessionNumber) || doc.sessions[doc.sessions.length - 1];
+          sess.games = sess.games || [];
+          sess.games.push(g);
+          if (typeof doc.markModified === 'function') doc.markModified('sessions');
+          await doc.save();
+        }
       }
 
-      return res.status(200).json({ ok: true, userId: user._id.toString(), guestId: user.guestId, sessionId: sessionId || null });
-    } catch (saveErr) {
-      console.error('Error saving user document:', saveErr);
-      return res.status(500).json({ ok: false, message: 'Error saving logs', error: saveErr.message });
+      // If client indicated end event, finalize current game / session
+      if (end === true) {
+        // End the game in session using helper
+        try {
+          await User.endGameInSession(user._id, currentSession.sessionNumber, gameKey, dayNumber);
+        } catch (e) {
+          console.warn('endGameInSession failed:', e && e.message ? e.message : e);
+        }
+
+        // If ADHD final click, mark session end as well (per requirement)
+        if (gameKey === 'adhd') {
+          try {
+            // Use the model helper to set session end time and flag consistently
+            await User.endSessionGeneric(user._id, currentSession.sessionNumber);
+          } catch (e) {
+            console.warn('endSessionGeneric failed:', e && e.message ? e.message : e);
+          }
+        }
+      }
+    } catch (appendErr) {
+      console.error('[saveGameLogs] append error:', appendErr && appendErr.message ? appendErr.message : appendErr);
     }
+
+    // Return success with session info
+    const fresh = await User.findById(user._id).lean();
+    return res.status(200).json({ ok: true, userId: user._id.toString(), guestId: user.guestId, sessionNumber: currentSession.sessionNumber, sessionId: currentSession.sessionId || null, sessions: fresh.sessions || [] });
   } catch (err) {
     console.error('Error saving game logs:', err);
     return res.status(500).json({ ok: false, message: 'Server error', error: err.message });
@@ -154,9 +130,9 @@ exports.saveGameLogs = async (req, res) => {
 exports.getUserGameLogs = async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).lean();
     if (!user) return res.status(404).json({ message: 'User not found' });
-    res.json({ games: user.games || {} });
+    res.json({ sessions: user.sessions || [] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });

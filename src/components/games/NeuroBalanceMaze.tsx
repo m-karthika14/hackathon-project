@@ -532,7 +532,7 @@ const StartScreen = memo(({ onStart }: { onStart: () => void }) => (
 ));
 
 interface GameScreenProps {
-  onGameComplete: (metrics: any, log: any[]) => void;
+    onGameComplete: (metrics: any, log: any[], diagnostics?: any) => void;
 }
 interface MazeCell {
   top: boolean;
@@ -563,6 +563,13 @@ const GameScreen = ({ onGameComplete }: GameScreenProps) => {
     const cellSize = useRef<number>(25); // Increased default cell size
     const containerRef = useRef<HTMLDivElement>(null);
     const errorLog = useRef<any[]>([]);
+    // Track last movement time for inactivity detection and move timestamps
+    const lastMoveTime = useRef<number | null>(null);
+    const moveTimestamps = useRef<{ time: number; from?: {x:number;y:number}; to?: {x:number;y:number}; direction?: string }[]>([]);
+    const idleSegments = useRef<{ start: string; durationSec: number; level?: number }[]>([]);
+    const inputMethod = useRef<'keyboard'|'mouse'|'touch'|'unknown'>('unknown');
+    const microMovementBuffer = useRef<{time:number;dir:string}[]>([]);
+    const idleStart = useRef<number | null>(null);
     
     const startLevel = useCallback((currentLevel: number) => {
         const config = LEVEL_CONFIG[currentLevel];
@@ -728,8 +735,12 @@ const GameScreen = ({ onGameComplete }: GameScreenProps) => {
         return () => clearInterval(interval);
     }, [level]);
 
-    const logError = useCallback((event: string) => {
-        errorLog.current.push({ time: new Date().toISOString(), level, event });
+    const logError = useCallback((event: string, details?: any) => {
+        // Attach timestamp, level, and optional details (position, sequence, extra)
+        const nowIso = new Date().toISOString();
+        const entry: any = { time: nowIso, level, event };
+        if (details) Object.assign(entry, details);
+        errorLog.current.push(entry);
     }, [level]);
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -741,13 +752,20 @@ const GameScreen = ({ onGameComplete }: GameScreenProps) => {
         const move = keyMap[e.code];
         if (!move) return;
 
+        const nowMs = Date.now();
+        // record input method as keyboard
+        inputMethod.current = 'keyboard';
+
         let intendedMove = true;
         if (move === 'U' && !currentCell.top) dy = -1;
         else if (move === 'D' && !currentCell.bottom) dy = 1;
         else if (move === 'L' && !currentCell.left) dx = -1;
         else if (move === 'R' && !currentCell.right) dx = 1;
         else {
-            metrics.current[level].wallCollisions++; logError("Wall collision"); sounds.collide.play();
+            // wall collision: include position and sequence
+            metrics.current[level].wallCollisions = (metrics.current[level].wallCollisions || 0) + 1;
+            logError("Wall collision", { position: { x, y }, attemptedDir: move, sequence: metrics.current[level].moves || 0 });
+            sounds.collide.play();
             intendedMove = false;
         }
         
@@ -755,15 +773,53 @@ const GameScreen = ({ onGameComplete }: GameScreenProps) => {
             const nextX = x + dx, nextY = y + dy;
             const collisionWithMovingWall = movingWalls.some(wall => wall.x === nextX && wall.y === nextY);
             if (collisionWithMovingWall) {
-                metrics.current[level].wallCollisions++; logError("Blocked by moving wall"); sounds.collide.play();
+                metrics.current[level].wallCollisions = (metrics.current[level].wallCollisions || 0) + 1;
+                logError("Blocked by moving wall", { position: { x: nextX, y: nextY }, attemptedDir: move, sequence: metrics.current[level].moves || 0 });
+                sounds.collide.play();
             } else {
+                // Movement happened — update movement timestamps and idle tracking
+                const from = { x, y };
+                const to = { x: nextX, y: nextY };
+
+                // Decision latency: record first movement latency for this level
+                if (!metrics.current[level].decisionLatency && metrics.current[level].startTime) {
+                    metrics.current[level].decisionLatency = nowMs - (metrics.current[level].startTime || nowMs);
+                }
+
+                // Update last move time and record move timestamp
+                lastMoveTime.current = nowMs;
+                moveTimestamps.current.push({ time: nowMs, from, to, direction: move });
+
+                // If we were idle, close the idle segment and record duration
+                if (idleStart.current) {
+                    const idleEnd = nowMs;
+                    const durationSec = Math.round((idleEnd - idleStart.current) / 1000);
+                    const startIso = new Date(idleStart.current).toISOString();
+                    idleSegments.current.push({ start: startIso, durationSec, level });
+                    logError('Idle resumed', { start: startIso, durationSec, level });
+                    idleStart.current = null;
+                }
+
+                // Micro-movement detection: quick back-and-forth or tiny reversals
+                microMovementBuffer.current.push({ time: nowMs, dir: move });
+                // Trim buffer to last 800ms
+                microMovementBuffer.current = microMovementBuffer.current.filter(m => nowMs - m.time <= 800);
+                // If we see a reversal within 500ms, count as microMovement
+                if (microMovementBuffer.current.length >= 2) {
+                    const last = microMovementBuffer.current[microMovementBuffer.current.length - 1];
+                    const prev = microMovementBuffer.current[microMovementBuffer.current.length - 2];
+                    if (last.dir !== prev.dir && (nowMs - prev.time) <= 500) {
+                        metrics.current[level].microMovements = (metrics.current[level].microMovements || 0) + 1;
+                    }
+                }
+
                 setPlayerPos({ x: nextX, y: nextY });
-                metrics.current[level].moves++; sounds.move.play();
+                metrics.current[level].moves = (metrics.current[level].moves || 0) + 1; sounds.move.play();
                 const path = metrics.current[level].path; path.push({x: nextX, y: nextY});
                 if (path.length > 2) {
                     const [p1, p2, p3] = path.slice(-3);
                     if (Math.abs(Math.atan2(p2.y - p1.y, p2.x - p1.x) - Math.atan2(p3.y - p2.y, p3.x - p2.x)) > Math.PI / 4) {
-                        metrics.current[level].sharpTurns++;
+                        metrics.current[level].sharpTurns = (metrics.current[level].sharpTurns || 0) + 1;
                     }
                 }
             }
@@ -774,6 +830,38 @@ const GameScreen = ({ onGameComplete }: GameScreenProps) => {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [handleKeyDown]);
+
+    // Track input method (pointer/touch/keyboard) and detect idle segments (>5s inactivity)
+    useEffect(() => {
+        const onPointer = (ev: any) => {
+            try {
+                if (ev && ev.pointerType === 'touch') inputMethod.current = 'touch';
+                else if (ev && ev.pointerType) inputMethod.current = 'mouse';
+                else inputMethod.current = 'mouse';
+            } catch (e) { inputMethod.current = 'unknown'; }
+        };
+        const onTouch = () => { inputMethod.current = 'touch'; };
+
+        window.addEventListener('pointerdown', onPointer);
+        window.addEventListener('touchstart', onTouch);
+
+        const idleCheck = setInterval(() => {
+            const now = Date.now();
+            if (!lastMoveTime.current) return;
+            // if we are not already marked idle and it's been >5s since last move, mark idle start
+            if (!idleStart.current && (now - lastMoveTime.current) > 5000) {
+                idleStart.current = lastMoveTime.current + 5000; // idle start when threshold crossed
+                const startIso = new Date(idleStart.current).toISOString();
+                logError('Idle started', { start: startIso, level });
+            }
+        }, 1000);
+
+        return () => {
+            window.removeEventListener('pointerdown', onPointer);
+            window.removeEventListener('touchstart', onTouch);
+            clearInterval(idleCheck);
+        };
+    }, [level, logError]);
     
     useEffect(() => {
         if (playerPos.x === goalPos.x && playerPos.y === goalPos.y) {
@@ -788,7 +876,8 @@ const GameScreen = ({ onGameComplete }: GameScreenProps) => {
             if (level >= Object.keys(LEVEL_CONFIG).length) {
                 console.log(`🏁 All levels complete! Calling onGameComplete...`);
                 sounds.game_complete.play();
-                onGameComplete(metrics.current, errorLog.current);
+                // Pass diagnostics collected during the run so the parent can build detailed logs
+                onGameComplete(metrics.current, errorLog.current, { moveTimestamps: moveTimestamps.current, idleSegments: idleSegments.current, inputMethod: inputMethod.current });
             } else {
                 console.log(`⬆️ Moving to next level (${level + 1})`);
                 sounds.level_complete.play(); 
@@ -869,7 +958,7 @@ interface MazeGameProps {
 const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
     const [gameState, setGameState] = useState<'start' | 'game'>('start');
 
-    const handleGameComplete = useCallback(async (fullMetrics: Record<string, any>, log: any[]) => {
+    const handleGameComplete = useCallback(async (fullMetrics: Record<string, any>, log: any[], diagnostics?: any) => {
         console.log(`🎮 handleGameComplete called!`);
         console.log(`📊 Full metrics:`, fullMetrics);
         console.log(`📝 Error log:`, log);
@@ -979,34 +1068,97 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
             }
         })();
 
-        // Also save raw logs under the user's document (guestId or userId)
+                // Also save raw logs under the user's document (guestId or userId)
         (async () => {
             try {
                 const guestId = localStorage.getItem('guestId');
                 const userId = localStorage.getItem('userId');
                 const sessionId = localStorage.getItem('gameSessionId') || null;
 
-                // Build level-1 structured logs per spec
-                const level1 = fullMetrics[1];
-                const level1ErrorLog = (log || []).filter(e => e && e.level === 1);
-                const level1Logs = [] as any[];
-                if (level1) {
-                    level1Logs.push({
-                        level: 1,
-                        startTime: level1.startTime || null,
-                        moves: level1.moves || 0,
-                        wallCollisions: level1.wallCollisions || 0,
-                        sharpTurns: level1.sharpTurns || 0,
-                        path: level1.path || [],
-                        shortestPath: level1.shortestPath || null,
-                        completionTime: level1.completionTime || null,
-                        errorLog: level1ErrorLog
-                    });
-                }
+                // Build structured logs for every level/trial in fullMetrics
+                const buildLevelEntry = (lvlNum: number, lvlMetrics: any) => {
+                    const lvlStartMs = lvlMetrics.startTime || null;
+                    const lvlCompletionMs = lvlMetrics.completionTime || null;
+                    // Filter error log entries for this level
+                    const lvlErrorLog = (log || []).filter((e: any) => e && e.level === lvlNum).map((e: any) => ({ ...e }));
+
+                    // Collision events (wall collision and blocked by moving wall)
+                    const collisionEvents = lvlErrorLog.filter((e: any) => e.event && /collision|blocked/i.test(e.event));
+                    const collisionTimes = collisionEvents.map((ev: any) => new Date(ev.time).getTime()).sort((a: number, b: number) => a - b);
+
+                    // collision spikes: sliding window of 10s with >=2 collisions
+                    const collisionSpikes: any[] = [];
+                    for (let i = 0; i < collisionTimes.length; i++) {
+                        let j = i + 1;
+                        while (j < collisionTimes.length && (collisionTimes[j] - collisionTimes[i]) <= 10000) j++;
+                        const count = j - i;
+                        if (count >= 2) {
+                            collisionSpikes.push({ start: new Date(collisionTimes[i]).toISOString(), end: new Date(collisionTimes[j - 1]).toISOString(), count, events: collisionTimes.slice(i, j).map((t: number) => new Date(t).toISOString()) });
+                        }
+                    }
+
+                    // Error clustering: group consecutive collisions separated by <=5s
+                    const errorClusters: any[] = [];
+                    if (collisionTimes.length > 0) {
+                        let cluster = [collisionTimes[0]];
+                        for (let k = 1; k < collisionTimes.length; k++) {
+                            if ((collisionTimes[k] - collisionTimes[k - 1]) <= 5000) {
+                                cluster.push(collisionTimes[k]);
+                            } else {
+                                errorClusters.push(cluster.map(t => new Date(t).toISOString()));
+                                cluster = [collisionTimes[k]];
+                            }
+                        }
+                        if (cluster.length) errorClusters.push(cluster.map(t => new Date(t).toISOString()));
+                    }
+
+                    // Idle events for this level
+                    const idleEvents = ((diagnostics && diagnostics.idleSegments) || []).filter((s: any) => s.level === lvlNum).map((s: any) => ({ start: s.start, durationSec: s.durationSec }));
+
+                    // Move timestamps that fall inside this level's timeframe
+                    const movesForLevel = ((diagnostics && diagnostics.moveTimestamps) || []).filter((m: any) => {
+                        if (!lvlStartMs) return true;
+                        const t = m.time;
+                        if (lvlCompletionMs) return t >= lvlStartMs && t <= (lvlStartMs + lvlCompletionMs);
+                        return t >= lvlStartMs;
+                    }).map((m: any) => ({ time: new Date(m.time).toISOString(), from: m.from, to: m.to, direction: m.direction }));
+
+                    const pathDeviationRatio = (lvlMetrics.shortestPath && Array.isArray(lvlMetrics.path) && lvlMetrics.path.length > 0) ? (lvlMetrics.path.length / lvlMetrics.shortestPath) : null;
+
+                    return {
+                        level: lvlNum,
+                        startTime: lvlMetrics.startTime || null,
+                        decisionLatencyMs: lvlMetrics.decisionLatency || null,
+                        completionTimeMs: lvlMetrics.completionTime || null,
+                        moves: lvlMetrics.moves || 0,
+                        wallCollisions: lvlMetrics.wallCollisions || 0,
+                        sharpTurns: lvlMetrics.sharpTurns || 0,
+                        microMovements: lvlMetrics.microMovements || 0,
+                        path: lvlMetrics.path || [],
+                        shortestPath: lvlMetrics.shortestPath || null,
+                        pathDeviationRatio,
+                        completionTimestamp: lvlMetrics.startTime ? new Date((lvlMetrics.startTime || 0) + (lvlMetrics.completionTime || 0)).toISOString() : null,
+                        errorLog: lvlErrorLog,
+                        collisionSpikes,
+                        errorClusters,
+                        idleEvents,
+                        jitter: { sharpTurns: lvlMetrics.sharpTurns || 0, microMovements: lvlMetrics.microMovements || 0 },
+                        decisionLatency: lvlMetrics.decisionLatency || null,
+                        moveTimestamps: movesForLevel,
+                        inputMethod: (diagnostics && diagnostics.inputMethod) || 'unknown'
+                    };
+                };
+
+                const levelLogs: any[] = [];
+                Object.keys(fullMetrics || {}).forEach(k => {
+                    const n = Number(k);
+                    const lm = fullMetrics[n];
+                    if (lm) levelLogs.push(buildLevelEntry(n, lm));
+                });
 
                 const logsPayload = {
                     gameKey: 'maze',
-                    logs: level1Logs,
+                    logs: levelLogs,
                     sessionId,
                     guestId: guestId || null,
                     userId: userId || null
@@ -1090,7 +1242,23 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                     const payload: any = { checkOnly: true };
                     if (userId) payload.userId = userId; else if (guestId) payload.guestId = guestId;
                     const resp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                    if (resp.ok) setGameState('game'); else {
+                    if (resp.ok) {
+                        // create a start session on backend so session.isStart is recorded
+                        try {
+                            const guestId = localStorage.getItem('guestId');
+                            const userId = localStorage.getItem('userId');
+                            const startPayload: any = { start: true };
+                            if (userId) startPayload.userId = userId; else if (guestId) startPayload.guestId = guestId;
+                            startPayload.gameKey = 'maze';
+                            const startResp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(startPayload) });
+                            if (startResp.ok) {
+                                const jr = await startResp.json().catch(() => null);
+                                if (jr && jr.sessionId) localStorage.setItem('gameSessionId', jr.sessionId);
+                                if (jr && jr.sessionNumber) localStorage.setItem('gameSessionNumber', String(jr.sessionNumber));
+                            }
+                        } catch (e) { console.warn('Failed to create session on start (maze):', e); }
+                        setGameState('game');
+                    } else {
                         const txt = await resp.json().catch(() => ({}));
                         const msg = txt && txt.message ? txt.message : 'You are not allowed to play at this time.';
                         const next = txt && txt.nextAllowedAt ? ` Next allowed at: ${txt.nextAllowedAt}` : '';

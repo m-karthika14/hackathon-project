@@ -43,21 +43,28 @@ const STIMULI = {
 };
 
 // --- Types ---
-type Trial = { shape: string; colorName: string; colorValue: string; correctResponse: 'left' | 'right' };
+type Trial = { shape: string; colorName: string; colorValue: string; correctResponse: 'left' | 'right'; isMatch?: boolean };
 type EventEntry = {
   trialNumber: number;
+  globalTrialNumber?: number;
   blockKey: string;
   blockName: string;
   rule: string;
   stimulusShape: string;
   stimulusColor: string;
+  stimulusId?: string;
   userResponse: string;
   correctResponse: 'left' | 'right';
   isCorrect: boolean;
   reactionTime: number;
   stimulusAppearanceTimestamp: string;
+  stimulusAppearanceTimestampIST?: string;
   responseTimestamp: string;
+  responseTimestampIST?: string;
   isPractice?: boolean;
+  expectedMatch?: boolean;
+  isMatch?: boolean;
+  inputMethod?: string;
 };
 
 // --- MODIFICATION: Removed practice block - assessment starts directly ---
@@ -203,10 +210,11 @@ const saveGameData = async (eventLog: EventEntry[]) => {
   console.log('🎮 ===== ADHD GAME DATA SAVE COMPLETE =====');
 };
 
-const generateTrial = (rule: string, history: EventEntry[]) : Trial => {
+const generateTrial = (rule: string, history: EventEntry[]) : Trial & { isMatch?: boolean } => {
   const shape = rand(STIMULI.shapes);
   const colorName = rand(STIMULI.colors);
   let correctResponse: 'left' | 'right' = 'right';
+  let isMatch = false;
   if (rule === 'shape') {
     correctResponse = ['circle', 'square'].includes(shape) ? 'left' : 'right';
   } else if (rule === 'color') {
@@ -216,9 +224,10 @@ const generateTrial = (rule: string, history: EventEntry[]) : Trial => {
     const twoBackBlockHistory = history.filter((e: EventEntry) => e.blockKey === '2back');
     // Get the trial from 2 positions back in the current block
     const twoBack = twoBackBlockHistory[twoBackBlockHistory.length - 2];
-    correctResponse = twoBack && twoBack.stimulusShape === shape ? 'left' : 'right';
+    isMatch = !!(twoBack && twoBack.stimulusShape === shape);
+    correctResponse = isMatch ? 'left' : 'right';
   }
-  return { shape, colorName, colorValue: STIMULI.colorMap[colorName], correctResponse };
+  return { shape, colorName, colorValue: STIMULI.colorMap[colorName], correctResponse, isMatch };
 };
 
 const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
@@ -338,9 +347,78 @@ const GameScreen = ({ onComplete }) => {
   const startRef = useRef<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(20);
   const [gameStartTime] = useState<number>(Date.now());
+  // Diagnostics refs for input detection
+  const inputMethodRef = useRef<'keyboard'|'mouse'|'touch'|'unknown'>('unknown');
+  const finishedRef = useRef(false);
+  // Pre-generated trials for blocks that need deterministic sequences (e.g., 2-back)
+  const preGenRef = useRef<Record<string, Trial[]>>({});
+
+  // Pre-generate 2-back sequences so the block has exactly N trials and predictable behavior
+  useEffect(() => {
+    const key = currentBlock.key;
+    // reset finished guard when entering a block
+    finishedRef.current = false;
+    // Only pre-generate for 2-back
+    if (currentBlock.rule === '2-back') {
+      if (!preGenRef.current[key] || preGenRef.current[key].length !== currentBlock.trials) {
+        const n = currentBlock.trials;
+        const seq: Trial[] = [];
+        for (let i = 0; i < n; i++) {
+          if (i < 2) {
+            const shape = rand(STIMULI.shapes);
+            const colorName = rand(STIMULI.colors);
+            seq.push({ shape, colorName, colorValue: STIMULI.colorMap[colorName], correctResponse: 'right', isMatch: false });
+            continue;
+          }
+          // Decide match probability (30% matches)
+          const makeMatch = Math.random() < 0.3;
+          let shape: string;
+          let colorName: string;
+          if (makeMatch) {
+            const twoBack = seq[i - 2];
+            shape = twoBack.shape;
+            colorName = twoBack.colorName;
+            seq.push({ shape, colorName, colorValue: STIMULI.colorMap[colorName], correctResponse: 'left', isMatch: true });
+          } else {
+            // choose a shape that's not equal to the 2-back shape to avoid accidental match
+            const forbidden = seq[i - 2].shape;
+            const choices = STIMULI.shapes.filter(s => s !== forbidden);
+            shape = rand(choices);
+            colorName = rand(STIMULI.colors);
+            seq.push({ shape, colorName, colorValue: STIMULI.colorMap[colorName], correctResponse: 'right', isMatch: false });
+          }
+        }
+        preGenRef.current[key] = seq;
+      }
+    } else {
+      // clear pregen for other blocks
+      if (preGenRef.current[currentBlock.key]) delete preGenRef.current[currentBlock.key];
+    }
+  }, [blockIndex]);
 
   useEffect(() => {
     sfx.init();
+  }, []);
+
+  // detect input method (pointer/touch/keyboard)
+  useEffect(() => {
+    const onPointer = (ev: any) => {
+      try {
+        if (ev && ev.pointerType === 'touch') inputMethodRef.current = 'touch';
+        else if (ev && ev.pointerType === 'mouse') inputMethodRef.current = 'mouse';
+        else inputMethodRef.current = 'mouse';
+      } catch (e) { inputMethodRef.current = 'unknown'; }
+    };
+    const onTouch = () => { inputMethodRef.current = 'touch'; };
+    const onKey = () => { inputMethodRef.current = 'keyboard'; };
+    window.addEventListener('pointerdown', onPointer);
+    window.addEventListener('touchstart', onTouch);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('touchstart', onTouch);
+      window.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   // Reset timer to 20 seconds when block changes
@@ -383,6 +461,16 @@ const GameScreen = ({ onComplete }) => {
 
   useEffect(() => {
     if (showRuleChange) return;
+    // If we have pre-generated trials for this block (e.g. 2back), use them
+    const pre = preGenRef.current[currentBlock.key];
+    if (pre && Array.isArray(pre) && typeof trialIndex === 'number') {
+      const t = pre[trialIndex];
+      setCurrentTrial(t || generateTrial(currentBlock.rule, eventLog));
+      startRef.current = performance.now();
+      return;
+    }
+
+    // Otherwise generate on-the-fly
     const t = generateTrial(currentBlock.rule, eventLog);
     setCurrentTrial(t);
     startRef.current = performance.now();
@@ -434,31 +522,69 @@ const GameScreen = ({ onComplete }) => {
     const stimulusAppearanceTimestamp = new Date(responseTimestamp.getTime() - rt);
     
     const isCorrect = side === currentTrial.correctResponse;
-    
+
     // Mark first 2 trials in 2-back block as practice
     const isPractice = currentBlock.rule === '2-back' && trialIndex < 2;
 
-    const entry = {
+    // include both per-block trial index and a global ordinal
+    const blockTrialNumber = trialIndex;
+    const globalTrialNumber = eventLog.length;
+
+    const entry: any = {
       level: 1,
-      trialNumber: eventLog.length,
+      trialNumber: blockTrialNumber,       // per-block trial index (0-based)
+      globalTrialNumber,                   // global across blocks
       blockKey: currentBlock.key,
       blockName: currentBlock.name,
       rule: currentBlock.rule,
       stimulusShape: currentTrial.shape,
       stimulusColor: currentTrial.colorName,
+      stimulusId: `${currentTrial.shape}_${currentTrial.colorName}`,
       userResponse: side,
       correctResponse: currentTrial.correctResponse,
       isCorrect,
       reactionTime: Math.round(rt),
       stimulusAppearanceTimestamp: stimulusAppearanceTimestamp.toISOString(),
       responseTimestamp: responseTimestamp.toISOString(),
+      // IST timestamps for immediate local readability
+      stimulusAppearanceTimestampIST: stimulusAppearanceTimestamp.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }),
+      responseTimestampIST: responseTimestamp.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }),
       isPractice, // Add practice flag
     };
 
-    setEventLog(prev => [...prev, entry]);
+    // 2-back specific: include expected match flag and whether it was a match
+    if (currentBlock.rule === '2-back') {
+      entry.expectedMatch = !!(currentTrial as any).isMatch;
+      entry.isMatch = entry.expectedMatch; // same semantics: expected == actual match condition
+    }
+
+    // attach observed input method when responding
+    (entry as any).inputMethod = inputMethodRef.current || 'unknown';
+
+    // Build new event log for immediate checks (state update follows)
+    const newEventLog = [...eventLog, entry];
+    setEventLog(newEventLog);
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     isCorrect ? sfx.success() : sfx.error();
 
+    // If this was the last trial of the last block, finish immediately (guard double-calls)
+    const lastBlockIndex = GAME_BLOCKS.length - 1;
+    const isLastBlock = blockIndex === lastBlockIndex;
+    const isLastTrialInBlock = trialIndex === (currentBlock.trials - 1);
+    if (isLastBlock && isLastTrialInBlock && !finishedRef.current) {
+      finishedRef.current = true;
+      console.log('🏁 Last trial answered — completing ADHD game from handleResponse');
+      setTimeout(() => {
+        try {
+          onComplete(newEventLog);
+        } catch (e) {
+          console.error('Error during onComplete:', e);
+        }
+      }, 500);
+      return;
+    }
+
+    // Otherwise continue as before
     setTimeout(scheduleNext, 420);
   };
 
@@ -547,8 +673,8 @@ const GameScreen = ({ onComplete }) => {
               const border = feedback ? (isChosen ? 'border-green-400' : 'border-red-400') : 'border-slate-600';
               return (
                 <motion.button
-                  key={side}
-                  onClick={() => handleResponse(side)}
+          key={side}
+            onClick={() => handleResponse(side as 'left' | 'right')}
                   whileTap={{ scale: 0.98 }}
                   whileHover={{ scale: 1.02 }}
                   className={`w-40 md:w-56 h-20 md:h-24 rounded-xl ${bg} ${border} border-2 flex items-center justify-center text-2xl font-bold text-white shadow-lg`}
@@ -755,7 +881,7 @@ interface ADHDGameProps {
 
 const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
   const [stage, setStage] = useState('start'); // start, game, report
-  const [analysis, setAnalysis] = useState(null);
+  const [analysis, setAnalysis] = useState<any>(null);
 
   const handleStart = async () => {
     if (Tone.context.state !== 'running') await Tone.start();
@@ -777,7 +903,19 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkPayload)
       });
       if (checkResp.ok) {
-        console.log('✅ Play allowed — starting game');
+        console.log('✅ Play allowed — creating session and starting game');
+        // Create a new session on server (Start Assessment pressed)
+        try {
+          const startPayload: any = { start: true };
+          if (userId) startPayload.userId = userId; else if (guestId) startPayload.guestId = guestId;
+          startPayload.gameKey = 'adhd';
+          const startResp = await fetch('http://localhost:5000/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(startPayload) });
+          if (startResp.ok) {
+            const jr = await startResp.json().catch(() => null);
+            if (jr && jr.sessionId) localStorage.setItem('gameSessionId', jr.sessionId);
+            if (jr && jr.sessionNumber) localStorage.setItem('gameSessionNumber', String(jr.sessionNumber));
+          }
+        } catch (e) { console.warn('Failed to create session on start:', e); }
         setStage('game');
       } else {
         const txt = await checkResp.json().catch(() => ({}));
@@ -791,14 +929,106 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
     }
   };
 
-  const handleComplete = (eventLog) => {
+  const handleComplete = (eventLog: EventEntry[]) => {
     console.log('🎯 ADHD Game handleComplete called!');
     console.log('📊 Event log received in handleComplete:', eventLog);
     console.log('📊 Event log length:', eventLog?.length || 0);
     
-    // ALWAYS save the data first before showing analysis
-    console.log('💾 Calling saveGameData from handleComplete...');
-    saveGameData(eventLog).then(() => {
+      // Build additional telemetry requested: false positives/negatives, hyperspeed, idle, RT drift, error clusters, decision latency, input method
+      const telemetry = {} as any;
+      // Per-trial RT series
+      const rtSeries = (eventLog || []).map((e: any, idx: number) => ({ trialIndex: idx, trialNumber: e.trialNumber, blockKey: e.blockKey, reactionTime: e.reactionTime, stimulusTime: e.stimulusAppearanceTimestamp, responseTime: e.responseTimestamp, isCorrect: e.isCorrect }));
+      telemetry.rtSeries = rtSeries;
+
+      // Hyper-speed responses (<200ms)
+      telemetry.hyperSpeed = rtSeries.filter((r: any) => typeof r.reactionTime === 'number' && r.reactionTime < 200).map((r: any) => ({ trialIndex: r.trialIndex, trialNumber: r.trialNumber, reactionTime: r.reactionTime, responseTime: r.responseTime }));
+
+      // False negatives: expected trials per block vs recorded
+      const falseNegatives: any[] = [];
+      for (const b of GAME_BLOCKS) {
+        const recorded = (eventLog || []).filter(e => e.blockKey === b.key && !e.isPractice);
+        if (recorded.length < b.trials) {
+          falseNegatives.push({ blockKey: b.key, expected: b.trials, recorded: recorded.length, missing: b.trials - recorded.length });
+        }
+      }
+      telemetry.falseNegatives = falseNegatives;
+
+      // False positives: here we infer 'commission' errors as responses that are incorrect on trials where response was not expected.
+      // The ADHD task doesn't explicitly include explicit No-Go trials in this implementation, so this will be empty unless a rule indicates withholding.
+      const falsePositives: any[] = [];
+      // Keep backwards-compatible: detect any trials with userResponse present but correctResponse === null (none in current impl)
+      for (const e of (eventLog || [])) {
+        if (e.userResponse && (e.correctResponse === null || e.correctResponse === undefined) && !e.isPractice) {
+          falsePositives.push({ trialNumber: e.trialNumber, blockKey: e.blockKey, responseTime: e.responseTimestamp, reactionTime: e.reactionTime });
+        }
+      }
+      telemetry.falsePositives = falsePositives;
+
+      // Idle/inactivity: gaps >5s between consecutive responses or between response->next stimulus
+      const idleSegments: any[] = [];
+      const toMs = (iso?: string) => iso ? new Date(iso).getTime() : null;
+      for (let i = 0; i < (eventLog || []).length - 1; i++) {
+        const cur = eventLog[i];
+        const next = eventLog[i + 1];
+        const curResp = toMs(cur.responseTimestamp);
+        const nextStim = toMs(next.stimulusAppearanceTimestamp);
+        if (curResp && nextStim) {
+          const gap = nextStim - curResp;
+          if (gap > 5000) {
+            idleSegments.push({ start: new Date(curResp + 1).toISOString(), durationSec: Math.round(gap / 1000), betweenTrials: [cur.trialNumber, next.trialNumber] });
+          }
+        }
+      }
+      // note: no reliable global gameStartTime available here; skip initial idle-from-start detection
+      telemetry.idleSegments = idleSegments;
+
+      // Reaction time drift: avg, std, slope (linear regression)
+      const rts = rtSeries.map((r: any) => (typeof r.reactionTime === 'number' ? r.reactionTime : null)).filter((v: any) => v !== null);
+      telemetry.rtStats = { avg: Math.round(mean(rts)), std: Math.round(std(rts)), count: rts.length };
+      // simple slope via least-squares
+      if (rts.length > 1) {
+        const n = rts.length;
+        const x = Array.from({ length: n }, (_, i) => i + 1);
+        const xm = mean(x);
+        const ym = mean(rts);
+        let num = 0, den = 0;
+        for (let i = 0; i < n; i++) { num += (x[i] - xm) * (rts[i] - ym); den += (x[i] - xm) * (x[i] - xm); }
+        telemetry.rtTrend = { slope: den !== 0 ? num / den : 0 };
+      } else telemetry.rtTrend = { slope: 0 };
+
+      // Error clustering: consecutive incorrect trials within <=5s
+      const errorClusters: any[] = [];
+      let cluster: string[] = [];
+      for (let i = 0; i < (eventLog || []).length; i++) {
+        const e = eventLog[i];
+        if (!e.isCorrect) {
+          const t = toMs(e.responseTimestamp) || toMs(e.stimulusAppearanceTimestamp) || Date.now();
+          if (cluster.length === 0) cluster.push(new Date(t).toISOString());
+          else {
+            const prev = new Date(cluster[cluster.length - 1]).getTime();
+            if (t - prev <= 5000) cluster.push(new Date(t).toISOString());
+            else { if (cluster.length) errorClusters.push([...cluster]); cluster = [new Date(t).toISOString()]; }
+          }
+        }
+      }
+      if (cluster.length) errorClusters.push(cluster);
+      telemetry.errorClusters = errorClusters;
+
+      // Decision latency per trial is already RT, so include as array
+      telemetry.decisionLatencies = rtSeries.map((r: any) => ({ trialIndex: r.trialIndex, trialNumber: r.trialNumber, decisionLatencyMs: r.reactionTime }));
+
+  // Input method: infer most frequent inputMethod recorded per trial (entries may include inputMethod)
+  const inputCounts = (eventLog || []).reduce((acc: any, e: any) => { const im = e && e.inputMethod ? e.inputMethod : 'unknown'; acc[im] = (acc[im] || 0) + 1; return acc; }, {});
+  let most = 'unknown'; let mostC = 0;
+  Object.keys(inputCounts).forEach(k => { if (inputCounts[k] > mostC) { most = k; mostC = inputCounts[k]; }});
+  telemetry.inputMethod = most;
+
+      // Build telemetry entry to append to logs (preserve existing entries)
+      const telemetryEntry = { level: 1, eventType: 'adhd_telemetry', telemetry, createdAt: new Date().toISOString() };
+
+      console.log('💾 Calling saveGameData from handleComplete with telemetry...');
+  const augmented = Array.isArray(eventLog) ? [...eventLog, telemetryEntry] : [telemetryEntry];
+  saveGameData(augmented as any).then(() => {
       console.log('✅ Save completed, now analyzing performance...');
       const a = analyzePerformance(eventLog);
       setAnalysis(a);
@@ -831,6 +1061,7 @@ const ADHDGame: React.FC<ADHDGameProps> = ({ onGameComplete }) => {
     setAnalysis(null);
     setStage('start');
   };
+
 
   return (
     <div className="min-h-screen antialiased font-sans text-white flex items-center justify-center p-6 relative">

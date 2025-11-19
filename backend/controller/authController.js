@@ -85,7 +85,7 @@ const guest = async (req, res) => {
       return res.status(200).json({ message: 'Guest ready', guestId: existing.guestId, userId: existing._id.toString() });
     }
 
-    const user = new User({ guestId, email: syntheticEmail, createdAt: new Date(), games: {} });
+    const user = new User({ guestId, email: syntheticEmail, createdAt: new Date() });
     await user.save();
     console.log('[auth][guest] Created NEW guest user:', guestId, user._id.toString());
 

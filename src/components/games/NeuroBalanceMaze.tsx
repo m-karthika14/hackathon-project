@@ -873,8 +873,12 @@ const GameScreen = ({ onGameComplete }: GameScreenProps) => {
             console.log(`Condition (level >= total): ${level} >= ${Object.keys(LEVEL_CONFIG).length} = ${level >= Object.keys(LEVEL_CONFIG).length}`);
             
             metrics.current[level].completionTime = Date.now() - metrics.current[level].startTime;
+            console.log(`📊 Level ${level} completed. Metrics:`, metrics.current[level]);
+            console.log(`📊 All metrics before onGameComplete:`, JSON.stringify(metrics.current));
+            
             if (level >= Object.keys(LEVEL_CONFIG).length) {
                 console.log(`🏁 All levels complete! Calling onGameComplete...`);
+                console.log(`📊 Passing metrics.current to onGameComplete:`, Object.keys(metrics.current));
                 sounds.game_complete.play();
                 // Pass diagnostics collected during the run so the parent can build detailed logs
                 onGameComplete(metrics.current, errorLog.current, { moveTimestamps: moveTimestamps.current, idleSegments: idleSegments.current, inputMethod: inputMethod.current });
@@ -961,13 +965,21 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
     const handleGameComplete = useCallback(async (fullMetrics: Record<string, any>, log: any[], diagnostics?: any) => {
     console.log(`🎮 handleGameComplete called!`);
     console.log(`📊 Full metrics:`, fullMetrics);
-    console.log(`📝 Error log:`, log);
+    console.log(`� Full metrics keys:`, Object.keys(fullMetrics || {}));
+    console.log(`📊 Level 1 metrics:`, fullMetrics ? fullMetrics[1] : 'N/A');
+    console.log(`📊 Level 2 metrics:`, fullMetrics ? fullMetrics[2] : 'N/A');
+    console.log(`�📝 Error log:`, log);
+    console.log(`📝 Error log length:`, log ? log.length : 0);
 
     // Deep-copy metrics/logs/diagnostics immediately so async saves use
     // a stable snapshot even if the component unmounts or refs reset.
     const fullMetricsCopy = JSON.parse(JSON.stringify(fullMetrics || {}));
     const errorLogCopy = JSON.parse(JSON.stringify(log || []));
     const diagnosticsCopy = diagnostics ? JSON.parse(JSON.stringify(diagnostics)) : {};
+    
+    console.log(`📊 After deep copy - fullMetricsCopy keys:`, Object.keys(fullMetricsCopy));
+    console.log(`📊 After deep copy - Level 1:`, fullMetricsCopy[1]);
+    console.log(`📊 After deep copy - Level 2:`, fullMetricsCopy[2]);
         
         // Still save the data to MongoDB but don't show report
         // setGameState('report'); // Remove this line
@@ -1159,8 +1171,18 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                 Object.keys(fullMetricsCopy || {}).forEach(k => {
                     const n = Number(k);
                     const lm = fullMetricsCopy[n];
-                    if (lm) levelLogs.push(buildLevelEntry(n, lm));
+                    console.log(`🔍 Processing metrics for level ${n}:`, lm);
+                    if (lm) {
+                        const builtEntry = buildLevelEntry(n, lm);
+                        console.log(`✅ Built log entry for level ${n}:`, JSON.stringify(builtEntry).slice(0, 500));
+                        levelLogs.push(builtEntry);
+                    } else {
+                        console.warn(`⚠️ No metrics found for level ${n}`);
+                    }
                 });
+                
+                console.log(`📊 Final levelLogs array length: ${levelLogs.length}`);
+                console.log(`📊 Final levelLogs contents:`, levelLogs);
 
                 const logsPayload = {
                     gameKey: 'maze',
@@ -1170,7 +1192,17 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                     userId: userId || null
                 };
 
-                console.log('📤 Sending raw maze logs to /api/logs', logsPayload);
+                console.log('📤 Sending raw maze logs to /api/logs');
+                console.log('📤 Payload structure:', {
+                    gameKey: logsPayload.gameKey,
+                    sessionId: logsPayload.sessionId,
+                    guestId: logsPayload.guestId,
+                    userId: logsPayload.userId,
+                    logsCount: Array.isArray(logsPayload.logs) ? logsPayload.logs.length : 0,
+                    logsType: Array.isArray(logsPayload.logs) ? 'array' : typeof logsPayload.logs
+                });
+                console.log('📤 First log entry sample:', logsPayload.logs && logsPayload.logs[0] ? JSON.stringify(logsPayload.logs[0]).slice(0, 500) : 'NO LOGS');
+                console.log('📤 Full payload (truncated):', JSON.stringify(logsPayload).slice(0, 3000));
                 try { console.log('[DEBUG] /api/logs payload (maze):', JSON.stringify(logsPayload).slice(0,2000)); } catch (e) {}
 
                 const logsResp = await fetch('http://localhost:5000/api/logs', {
@@ -1179,11 +1211,31 @@ const MazeGame = ({ onMazeComplete }: MazeGameProps = {}) => {
                     body: JSON.stringify(logsPayload)
                 });
 
+                console.log('📥 Backend response status:', logsResp.status);
+                const responseText = await logsResp.text();
+                console.log('📥 Backend response body:', responseText);
+
                 if (!logsResp.ok) {
-                    console.error('❌ Failed to save raw maze logs', await logsResp.text());
+                    console.error('❌ Failed to save raw maze logs. Status:', logsResp.status);
+                    console.error('❌ Response:', responseText);
                 } else {
-                    const lr = await logsResp.json();
-                    console.log('✅ Raw maze logs saved:', lr);
+                    try {
+                        const lr = JSON.parse(responseText);
+                        console.log('✅ Raw maze logs saved successfully!');
+                        console.log('✅ Response data:', lr);
+                        console.log('✅ Sessions in response:', lr.sessions ? lr.sessions.length : 'N/A');
+                        if (lr.sessions && lr.sessions.length > 0) {
+                            const lastSession = lr.sessions[lr.sessions.length - 1];
+                            console.log('✅ Last session games:', lastSession.games ? lastSession.games.length : 'N/A');
+                            if (lastSession.games && lastSession.games.length > 0) {
+                                lastSession.games.forEach((game: any, idx: number) => {
+                                    console.log(`✅ Game ${idx}: type=${game.type}, logs=${game.logs ? game.logs.length : 0}`);
+                                });
+                            }
+                        }
+                    } catch (parseError) {
+                        console.error('❌ Error parsing response:', parseError);
+                    }
                     // After saving logs, mark the game/session as ended so backend sets endTime/isEnd
                     try {
                         const sessionId = localStorage.getItem('gameSessionId') || null;

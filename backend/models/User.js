@@ -29,6 +29,7 @@ const SessionSchema = new Schema({
 const userSchema = new Schema({
   guestId: { type: String, index: true, sparse: true },
   email: { type: String, lowercase: true, trim: true, index: true, sparse: true },
+  game: { type: String, enum: ['start', 'end', null], default: null },
   passwordHash: { type: String },
   createdAt: { type: Date, default: () => new Date() },
   sessions: { type: [SessionSchema], default: [] }
@@ -43,7 +44,7 @@ function istStringFor(date) {
 /**
  * Create a new top-level session for the user.
  * sessionNumber = existing sessions length + 1
- * If opts.isStart is true, populate startTime fields immediately.
+ * If opts.isStart is true, populate startTime fields immediately and set user.game = 'start'.
  */
 userSchema.statics.createNewSession = async function (userId, opts = {}) {
   const User = this;
@@ -61,6 +62,8 @@ userSchema.statics.createNewSession = async function (userId, opts = {}) {
       existingActive.startTimeUTC = existingActive.startTimeUTC || now;
       existingActive.startTimeIST = existingActive.startTimeIST || istStringFor(now);
       existingActive.isStart = true;
+      // Set user.game = "start" when assessment starts
+      user.game = 'start';
     }
     if (typeof user.markModified === 'function') user.markModified('sessions');
     await user.save();
@@ -82,6 +85,12 @@ userSchema.statics.createNewSession = async function (userId, opts = {}) {
   };
 
   user.sessions.push(session);
+  
+  // Set user.game = "start" when assessment starts
+  if (opts.isStart) {
+    user.game = 'start';
+  }
+  
   if (typeof user.markModified === 'function') user.markModified('sessions');
   await user.save();
   return { user, session };
@@ -191,6 +200,7 @@ userSchema.statics.appendGameLog = async function (userId, gameType, dayNumber =
 /**
  * Start session helper (called when "Start Assessment" clicked on home page)
  * Creates session if missing and marks isStart and start times.
+ * Also sets user.game = "start"
  */
 userSchema.statics.startSessionGeneric = async function (userId, sessionNumber = null) {
   const res = await this.findOrCreateSession(userId, { sessionNumber, createIfMissing: true, isStart: true });
@@ -199,6 +209,10 @@ userSchema.statics.startSessionGeneric = async function (userId, sessionNumber =
   session.startTimeUTC = now;
   session.startTimeIST = istStringFor(now);
   session.isStart = true;
+  
+  // Set user.game = "start" when assessment starts
+  user.game = 'start';
+  
   if (typeof user.markModified === 'function') user.markModified('sessions');
   await user.save();
   return { ok: true, startTimeUTC: now.toISOString(), userId: user._id.toString(), session: session.sessionNumber };
@@ -206,6 +220,7 @@ userSchema.statics.startSessionGeneric = async function (userId, sessionNumber =
 
 /**
  * End session helper (called when final ADHD 2-back last click happens)
+ * Also sets user.game = "end"
  */
 userSchema.statics.endSessionGeneric = async function (userId, sessionNumber = null) {
   const res = await this.findOrCreateSession(userId, { sessionNumber, createIfMissing: false });
@@ -215,6 +230,10 @@ userSchema.statics.endSessionGeneric = async function (userId, sessionNumber = n
   session.endTimeUTC = now;
   session.endTimeIST = istStringFor(now);
   session.isEnd = true;
+  
+  // Set user.game = "end" when ADHD final click happens
+  user.game = 'end';
+  
   if (typeof user.markModified === 'function') user.markModified('sessions');
   await user.save();
   return { ok: true, endTimeUTC: now.toISOString(), userId: user._id.toString(), session: session.sessionNumber };
